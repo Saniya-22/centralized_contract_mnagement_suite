@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: govgig-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DB=${PG_DB:-daedalus}
+      - PG_USER=${PG_USER:-postgres}
+      - PG_PASSWORD=${PG_PASSWORD}
+      - MODEL_NAME=${MODEL_NAME:-gpt-4o}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - postgres
+    networks:
+      - govgig-network
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: govgig-postgres
+    environment:
+      - POSTGRES_DB=${PG_DB:-daedalus}
+      - POSTGRES_USER=${PG_USER:-postgres}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - govgig-network
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+
+networks:
+  govgig-network:
+    driver: bridge
