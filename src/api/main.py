@@ -3,6 +3,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import logging
@@ -176,8 +177,8 @@ async def query_endpoint(request: QueryRequest):
         
         logger.info(f"Processing query: {request.query[:100]}...")
         
-        # Run orchestrator synchronously
-        result = orchestrator.run_sync(request.query, context)
+        # Run orchestrator synchronously in threadpool to avoid event loop starvation
+        result = await run_in_threadpool(orchestrator.run_sync, request.query, context)
         
         return QueryResponse(**result)
         
@@ -277,7 +278,7 @@ async def clause_lookup(clause_reference: str):
     logger.info(f"Clause lookup request: '{clause_reference}'")
 
     try:
-        result = VectorQueries.get_clause_by_reference(clause_reference)
+        result = await run_in_threadpool(VectorQueries.get_clause_by_reference, clause_reference)
         return ClauseResponse(
             found=result["found"],
             clause_reference=clause_reference,

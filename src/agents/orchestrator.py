@@ -88,7 +88,7 @@ class GovGigOrchestrator:
 
         # Map intent to graph routing decision
         if intent == QueryIntent.OUT_OF_SCOPE:
-            next_agent = "data_retrieval"
+            next_agent = "end"
         else:
             next_agent = "data_retrieval"
 
@@ -112,6 +112,9 @@ class GovGigOrchestrator:
                 + f"→ {next_agent}"
             ],
         }
+        if intent == QueryIntent.OUT_OF_SCOPE:
+            delta["generated_response"] = "I can only answer questions related to FAR, DFARS, or EM385 regulations. Please provide a relevant query."
+            
         return delta
     
     def _determine_next_agent(
@@ -124,6 +127,8 @@ class GovGigOrchestrator:
         # For Phase 1, we only have data_retrieval implemented
         if next_agent == 'data_retrieval':
             return "data_retrieval"
+        elif next_agent == 'end':
+            return "end"
         else:
             # Other agents not yet implemented, go directly to synthesizer
             logger.warning(f"Agent {next_agent} not implemented, going to synthesizer")

@@ -46,40 +46,35 @@ class BaseAgent(ABC):
         pass
     
     @abstractmethod
-    def run(self, state: GovGigState) -> GovGigState:
+    def run(self, state: GovGigState) -> Dict[str, Any]:
         """Execute the agent logic.
         
         Args:
             state: Current graph state
             
         Returns:
-            Updated graph state
+            Updated graph state dictionary delta
         """
         pass
     
-    def _log_step(self, state: GovGigState, message: str):
-        """Log an agent step."""
+    def _log_step(self, state: GovGigState, message: str) -> Dict[str, Any]:
+        """Log an agent step and return state delta."""
         logger.info(f"[{self.name}] {message}")
         
-        # Add to agent path tracking
-        if "agent_path" not in state or state["agent_path"] is None:
-            state["agent_path"] = []
-        state["agent_path"].append(f"{self.name}: {message}")
+        # Return state delta for agent path
+        return {"agent_path": [f"{self.name}: {message}"]}
     
-    def _add_thought(self, state: GovGigState, thought: str):
-        """Add a thought to the state (for CoT mode)."""
+    def _add_thought(self, state: GovGigState, thought: str) -> Dict[str, Any]:
+        """Add a thought to the state (for CoT mode) and return state delta."""
         if state.get("cot_enabled", False):
-            if "thought_process" not in state or state["thought_process"] is None:
-                state["thought_process"] = []
-            state["thought_process"].append(f"[{self.name}] {thought}")
             logger.debug(f"[{self.name}] Thought: {thought}")
+            return {"thought_process": [f"[{self.name}] {thought}"]}
+        return {}
     
-    def _add_error(self, state: GovGigState, error: str):
-        """Add an error to the state."""
-        if "errors" not in state or state["errors"] is None:
-            state["errors"] = []
-        state["errors"].append(f"[{self.name}] {error}")
+    def _add_error(self, state: GovGigState, error: str) -> Dict[str, Any]:
+        """Add an error to the state and return state delta."""
         logger.error(f"[{self.name}] Error: {error}")
+        return {"errors": [f"[{self.name}] {error}"]}
     
     def _format_history(self, state: GovGigState) -> List:
         """Format chat history for LLM."""

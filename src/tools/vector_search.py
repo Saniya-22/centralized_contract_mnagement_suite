@@ -70,9 +70,6 @@ class ClauseReferenceInput(BaseModel):
 class VectorSearchTool:
     """Wraps the regulations search tool for binding to LangChain agents."""
 
-    def __init__(self):
-        self.vector_queries = VectorQueries()
-
     @staticmethod
     @tool(args_schema=VectorSearchInput)
     def search_regulations(

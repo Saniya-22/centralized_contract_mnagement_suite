@@ -112,10 +112,11 @@ def get_db_connection() -> Generator:
             _db_pool.return_connection(conn)
 
 
-def get_async_db_connection():
-    """Get async database connection (for future AsyncPG integration)"""
-    # Placeholder for async implementation
-    raise NotImplementedError("Async connections not yet implemented")
+from fastapi.concurrency import run_in_threadpool
+
+async def execute_in_db(func, *args, **kwargs):
+    """Execute a database function safely in the thread pool."""
+    return await run_in_threadpool(func, *args, **kwargs)
 
 
 def close_db_pool():

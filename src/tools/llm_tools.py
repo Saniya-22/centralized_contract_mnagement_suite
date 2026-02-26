@@ -126,7 +126,7 @@ Content:
         doc_tokens = count_tokens(doc_text)
         if total_tokens + doc_tokens > max_tokens:
             logger.info(f"Reached token limit at document {idx}")
-            break
+            continue
         
         formatted_parts.append(doc_text)
         total_tokens += doc_tokens
