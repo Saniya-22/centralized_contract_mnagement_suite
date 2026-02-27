@@ -45,7 +45,6 @@ resource "aws_ecs_task_definition" "main" {
           name      = "MODEL_NAME"
           valueFrom = "${aws_secretsmanager_secret.env.arn}:MODEL_NAME::"
         },
-        # PostgreSQL for Help Agent RAG
         {
           name      = "PG_HOST"
           valueFrom = "${aws_secretsmanager_secret.db.arn}:host::"
@@ -63,10 +62,9 @@ resource "aws_ecs_task_definition" "main" {
           valueFrom = "${aws_secretsmanager_secret.db.arn}:username::"
         },
         {
-          name      = "PG_PASS"
+          name      = "PG_PASSWORD"
           valueFrom = "${aws_secretsmanager_secret.db.arn}:password::"
         },
-        # Auth secrets
         {
           name      = "JWT_SECRET"
           valueFrom = "${aws_secretsmanager_secret.auth.arn}:JWT_SECRET::"
@@ -106,7 +104,7 @@ resource "aws_ecs_task_definition" "main" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "wget -q --spider http://localhost:8000/health || exit 1"]
+        command     = ["CMD-SHELL", "wget -q --spider http://localhost:8000/api/v1/health || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -122,13 +120,13 @@ resource "aws_ecs_task_definition" "main" {
 
 # ECS Service
 resource "aws_ecs_service" "main" {
-  name                               = "${var.project_name}-${var.environment}-service"
-  cluster                            = aws_ecs_cluster.main.id
-  task_definition                    = aws_ecs_task_definition.main.arn
-  desired_count                      = var.desired_count
-  launch_type                        = "FARGATE"
-  platform_version                   = "LATEST"
-  health_check_grace_period_seconds  = 60
+  name                              = "${var.project_name}-${var.environment}-service"
+  cluster                           = aws_ecs_cluster.main.id
+  task_definition                   = aws_ecs_task_definition.main.arn
+  desired_count                     = var.desired_count
+  launch_type                       = "FARGATE"
+  platform_version                  = "LATEST"
+  health_check_grace_period_seconds = 60
 
   network_configuration {
     subnets          = aws_subnet.private[*].id
