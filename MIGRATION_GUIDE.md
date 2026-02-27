@@ -13,6 +13,9 @@ This guide walks through migrating from the existing Node.js/Vercel AI SDK backe
 - [x] Data retrieval agent with vector search
 - [x] FastAPI backend with REST and WebSocket APIs
 - [x] Database connection with existing PostgreSQL/pgvector
+- [x] JWT Authentication
+- [x] Persistent Chat History (PostgreSQL)
+- [x] API Response Caching (PostgreSQL)
 - [x] Docker containerization
 - [x] Testing framework
 - [x] Documentation
@@ -198,66 +201,92 @@ ws.onmessage = (event) => {
 | Document Analysis | DocumentAnalysisAgent | ⏳ TODO |
 | Document Generation | DocumentGenerationAgent | ⏳ TODO |
 | Help Agent | HelpAgent | ⏳ TODO |
-| Authentication | JWT + FastAPI | ⏳ TODO |
-| Chat History | PostgreSQL + State | ⏳ TODO |
+| Authentication | JWT + FastAPI (HTTPBearer) | ✅ Done |
+| Chat History | PostgreSQL (LangGraph Saver) | ✅ Done |
 | Feedback System | API Endpoints | ⏳ TODO |
 
-### Authentication Migration
+### Authentication Implementation
+
+Authentication is implemented using FastAPI's `HTTPBearer` security scheme and the `python-jose` library for JWT validation.
 
 ```python
 # src/api/auth.py
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+security = HTTPBearer()
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    # Implement JWT validation
-    pass
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(
+            token, 
+            settings.JWT_SECRET_KEY, 
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        user_id = payload.get("sub") or payload.get("id")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
 
-# Use in endpoints
+# Use in main.py
 @app.post("/api/v1/query")
-async def query(request: QueryRequest, user = Depends(get_current_user)):
-    # Protected endpoint
+async def query(request: QueryRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    # user contains the JWT payload
+    return await process_query(request, user)
+```
+
+### Chat History & Persistence
+
+Persistence is handled by `langgraph-checkpoint-postgres`, which stores the full agent state and message history in PostgreSQL.
+
+1. **Configuration**: The `CheckpointerManager` handles the connection pool for the checkpointer.
+2. **Usage**: Pass a `thread_id` in the configuration to maintain session state.
+
+```python
+# src/agents/orchestrator.py
+config = {"configurable": {"thread_id": "user_session_123"}}
+async for event in self.app.astream_events(initial_state, config=config, version="v1"):
+    # State is automatically saved to 'checkpoints' and 'writes' tables
     pass
 ```
 
 ## Phase 5: Performance Optimization
 
-### 1. Caching Layer
+### 1. Caching Layer (PostgreSQL)
+
+Instead of Redis, we use a dedicated PostgreSQL table `api_response_cache` for persistent response caching. This simplifies the stack while maintaining high performance.
+
+- **Storage**: JSONB column for flexible response data.
+- **Eviction**: TTL-based expiration (`expires_at` column).
+- **Lookup**: SHA-256 hashing of query text and settings for O(1) retrieval.
 
 ```python
-# src/utils/cache.py
-from functools import lru_cache
-import redis
+# src/db/queries.py
+def get_cached_response(query: str, cot: bool = True):
+    # Generates a hash and looks up in api_response_cache table
+    # Returns the response if not expired
+    pass
 
-# In-memory cache for embeddings
-@lru_cache(maxsize=1000)
-def cached_embedding(text: str) -> List[float]:
-    return get_embedding(text)
-
-# Redis for query results
-redis_client = redis.Redis()
-
-def cache_query_result(query: str, result: dict, ttl: int = 3600):
-    key = f"query:{hash(query)}"
-    redis_client.setex(key, ttl, json.dumps(result))
+def set_cached_response(query: str, response: dict, ttl_hours: int = 24):
+    # Upserts the response into the cache table
+    pass
 ```
 
-### 2. Async Database Queries
+### 2. Async Database Operations
+
+To prevent blocking the FastAPI event loop, all synchronous database operations are executed in a thread pool using `run_in_threadpool`.
 
 ```python
-# Upgrade to asyncpg
-import asyncpg
+# src/db/connection.py
+from fastapi.concurrency import run_in_threadpool
 
-async def get_async_pool():
-    return await asyncpg.create_pool(
-        host=settings.PG_HOST,
-        database=settings.PG_DB,
-        user=settings.PG_USER,
-        password=settings.PG_PASSWORD
-    )
+async def execute_in_db(func, *args, **kwargs):
+    """Execute a database function safely in the thread pool."""
+    return await run_in_threadpool(func, *args, **kwargs)
 ```
 
 ### 3. Load Balancing
@@ -316,6 +345,12 @@ LANGCHAIN_API_KEY=<your-key>
 # Security
 CORS_ORIGINS=["https://yourdomain.com"]
 JWT_SECRET_KEY=<strong-random-key>
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+# Database Pooling
+PG_POOL_MIN=2
+PG_POOL_MAX=20
 ```
 
 ## Phase 7: Retirement of Node.js Backend

@@ -387,12 +387,10 @@ uvicorn src.api.main:app --port 8001
 - [ ] Add Document Analysis Agent
 - [ ] Add Document Generation Agent
 - [ ] Implement Help Agent
-- [ ] Add user authentication
 - [ ] Add feedback collection
 - [ ] Add LangGraph visualization
 - [ ] Add performance metrics
 - [ ] Add rate limiting
-- [ ] Add caching layer
 
 ## 📄 License
 
