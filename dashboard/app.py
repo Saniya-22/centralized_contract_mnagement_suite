@@ -146,8 +146,6 @@ with st.sidebar:
     latency_gauge = create_gauge(st.session_state.last_perf['latency'], "Latency", "s")
     st.plotly_chart(latency_gauge, use_container_width=True, key="latency_chart")
     
-    st.metric("Avg Rank Accuracy", f"{st.session_state.last_perf['confidence']*100:.1f}%")
-    
     st.divider()
     
     st.subheader("Session Intelligence")

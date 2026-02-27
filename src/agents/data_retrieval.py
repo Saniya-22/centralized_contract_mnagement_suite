@@ -22,48 +22,47 @@ majority of queries, cutting those queries from 5 LLM calls to 3.
 from typing import List, Dict, Any, Optional
 import json
 import logging
+import asyncio
 
 from src.agents.base import BaseAgent
 from src.agents.prompts import get_data_retrieval_prompt
 from src.state.graph_state import GovGigState
 from src.tools.vector_search import VectorSearchTool
 from src.tools.query_classifier import QueryIntent
+from src.reflection import ReflectionManager
 
 logger = logging.getLogger(__name__)
 
 
 class DataRetrievalAgent(BaseAgent):
-    """Agent specialised in retrieving regulatory documents."""
+    """Agent specialised in retrieving regulatory documents with ReflectionRAG."""
 
     def __init__(self):
         super().__init__(name="DataRetrievalAgent")
 
         self.vector_search_tool = VectorSearchTool()
+        self.reflection_manager = ReflectionManager(threshold=0.7)
         all_tools = self.vector_search_tool.as_langchain_tools()
 
         # Only bound when we genuinely need LLM tool selection (ambiguous queries)
         self.llm_with_tools = self.llm.bind_tools(all_tools)
 
         logger.info(
-            f"DataRetrievalAgent initialised with {len(all_tools)} tools: "
-            + ", ".join(t.name for t in all_tools)
+            f"DataRetrievalAgent initialised with {len(all_tools)} tools and ReflectionManager"
         )
 
     def get_system_prompt(self, state: GovGigState) -> str:
         return get_data_retrieval_prompt(state)
 
-    # ── LangGraph node ─────────────────────────────────────────────────────────
+    # ── LangGraph node (Async) ──────────────────────────────────────────────────
 
-    def run(self, state: GovGigState) -> Dict[str, Any]:
+    async def run(self, state: GovGigState) -> Dict[str, Any]:
         """Execute document retrieval and return a *delta dict*.
 
-        Dispatch priority:
-          1. query_intent == CLAUSE_LOOKUP  → direct clause lookup, 0 LLM calls
-          2. query_intent == REGULATION_SEARCH → direct search, 0 LLM calls
-          3. unknown intent                 → 1 gpt-4o tool-selector call (fallback)
-
-        Returns:
-            dict with only the *new* values to be merged via operator.add reducers.
+        Includes NyaySetu-style Reflection:
+          1. Initial Retrieval (Fast)
+          2. Critique (Heuristic, 0s latency)
+          3. Self-Healing (Only if confidence < threshold)
         """
         # ── Local delta accumulators ──────────────────────────────────────────
         new_docs:       List[Dict[str, Any]] = []
@@ -89,7 +88,7 @@ class DataRetrievalAgent(BaseAgent):
         try:
             _log("Starting document retrieval")
 
-            # ── Intent-based fast dispatch ────────────────────────────────────
+            # ── 1. Initial Retrieval ──────────────────────────────────────────
             # Read classifier output written by the router node
             query_intent      = state.get("query_intent")
             detected_clause   = state.get("detected_clause_ref")
@@ -125,7 +124,51 @@ class DataRetrievalAgent(BaseAgent):
                     state, new_docs, new_tool_calls, new_reg_types, _log, _think
                 )
 
-            _log(f"Completed retrieval: {len(new_docs)} new documents")
+            # ── 2. Reflection & Critique (Latency-Neutral) ────────────────────
+            # Apply reflection to ALL paths — including clause lookups that
+            # fell back to hybrid search and returned mismatched results.
+            critique = self.reflection_manager.check_quality(state["query"], new_docs)
+            
+            if not critique["passed"]:
+                _log(f"Reflection: Low confidence ({critique['score']:.2f}). Reason: {critique['reason']}. Triggering self-healing.")
+                _think(f"Retrieval quality critique failed: {critique['reason']}. Seeking broader context.")
+                
+                # If mismatch detected, clear original bad results IMMEDIATELY
+                # to prevent them leaking into the final response/evidence.
+                is_mismatch = "mismatch" in critique.get("reason", "").lower()
+                if is_mismatch:
+                    _log("Regulation mismatch detected. Clearing original documents.")
+                    new_docs = []
+                    new_reg_types = []
+
+                # ── 3. Self-Healing (Occurs only on failure) ──────────────
+                reg_filter = detected_reg_type
+                async def _search_wrapper(q: str):
+                    search_args = {"query": q, "k": 5}
+                    if reg_filter:
+                        search_args["regulation_type"] = reg_filter
+                    return await asyncio.to_thread(
+                        self.vector_search_tool.search_regulations.invoke,
+                        search_args
+                    )
+                
+                healed_docs = await self.reflection_manager.heal_search(
+                    query=state["query"],
+                    fail_reason=critique["reason"],
+                    search_func=_search_wrapper
+                )
+                
+                if healed_docs:
+                    _log(f"Self-healing: Added {len(healed_docs)} supplemental documents")
+                    new_docs.extend(healed_docs)
+                    for d in healed_docs:
+                        rt = d.get("regulation_type")
+                        if rt and rt not in new_reg_types:
+                            new_reg_types.append(rt)
+            else:
+                _log(f"Reflection: High confidence ({critique['score']:.2f}). Fast-path synthesis.")
+
+            _log(f"Completed retrieval: {len(new_docs)} total documents")
 
         except Exception as exc:
             msg = f"Data retrieval failed: {exc}"
@@ -146,7 +189,7 @@ class DataRetrievalAgent(BaseAgent):
             delta["errors"] = new_errors
         return delta
 
-    # ── Private dispatch helpers ───────────────────────────────────────────────
+    # ── Private dispatch helpers (Sync for tool compatibility) ────────────────
 
     def _do_clause_lookup(
         self,
@@ -167,11 +210,18 @@ class DataRetrievalAgent(BaseAgent):
                 "regulation_type": clause.get("source", "Unknown"),
                 "section":         clause.get("part", "N/A"),
                 "chunk_index":     None,
-                "score":           1.0,
-                "retrieval_methods": ["clause_lookup"],
+                "score":           float(result.get("confidence") or 10.0 if result.get("found") else 0.5),
+                "retrieval_methods": ["clause_lookup" if result.get("found") else "clause_fallback"],
                 "metadata":        clause,
             }
             new_docs.append(doc)
+            
+            # If fuzzy results exist, add them too (helps reflection check diversity)
+            if result.get("fuzzy_results"):
+                for fuzzy in result["fuzzy_results"]:
+                    # Ensure they don't have the exact same content as the primary fallback
+                    if fuzzy.get("content") != doc["content"]:
+                        new_docs.append(fuzzy)
             if clause.get("source") and clause["source"] not in new_reg_types:
                 new_reg_types.append(clause["source"])
 
@@ -211,13 +261,7 @@ class DataRetrievalAgent(BaseAgent):
                 new_reg_types.append(rt)
 
         _log(f"Retrieved {len(results)} documents via search_regulations")
-        if results:
-            _think(
-                f"Found {len(results)} relevant documents. "
-                f"Top result from {results[0].get('regulation_type', 'Unknown')} "
-                f"with score {results[0].get('score', 0):.3f}. "
-                f"Methods: {results[0].get('retrieval_methods', [])}"
-            )
+        # The _think call about results is now handled by the reflection manager
         return new_docs, new_tool_calls, new_reg_types
 
     def _do_llm_dispatch(
@@ -237,7 +281,7 @@ class DataRetrievalAgent(BaseAgent):
                 new_docs.append({
                     "rank": 1, "content": response.content,
                     "source": "agent", "regulation_type": "N/A",
-                    "section": "N/A", "chunk_index": None, "score": 0.5,
+                    "section": "N/A", "chunk_index": None, "score": 5.0,
                     "retrieval_methods": ["direct_response"], "metadata": {},
                 })
             return new_docs, new_tool_calls, new_reg_types

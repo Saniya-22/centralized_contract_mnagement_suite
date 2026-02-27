@@ -175,9 +175,9 @@ async def root():
 )
 async def query_endpoint(
     request: QueryRequest, 
-    user: Dict[str, Any] = Depends(get_current_user)
+    user: Optional[Dict[str, Any]] = Depends(get_optional_user)
 ):
-    """Process a query and return results (Authenticated)"""
+    """Process a query and return results (Optional Authentication)"""
     if orchestrator is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -185,7 +185,9 @@ async def query_endpoint(
         )
     
     try:
-        user_id = user.get("sub") or user.get("id") or user.get("user_id")
+        # Provide a default user for the local dashboard (Pilot User)
+        user_info = user or {"sub": "pilot_user_local", "name": "Pilot User"}
+        user_id = user_info.get("sub") or user_info.get("id") or user_info.get("user_id")
         context = {
             "person_id": request.person_id or user_id,
             "thread_id": request.thread_id or request.person_id or user_id or "default_thread",
@@ -202,8 +204,8 @@ async def query_endpoint(
             return QueryResponse(**cached_result)
 
         # 2. If no cache, run orchestrator
-        # Run orchestrator synchronously in threadpool to avoid event loop starvation
-        result = await run_in_threadpool(orchestrator.run_sync, request.query, context)
+        # Run orchestrator asynchronously
+        result = await orchestrator.run_async(request.query, context)
         
         # 3. Store in Cache
         VectorQueries.set_cached_response(request.query, result, request.cot)

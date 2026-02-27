@@ -445,6 +445,7 @@ class VectorQueries:
             primary = direct_results[0]
             return {
                 "found": True,
+                "confidence": 1.0,
                 "clause": {
                     "reference": clause_reference,
                     "source": primary.get("metadata", {}).get("source"),
@@ -457,29 +458,31 @@ class VectorQueries:
 
         # Stage 2: fall back to full hybrid pipeline
         logger.info(
-            f"Direct clause search found nothing for '{clause_num}', "
-            "falling back to full pipeline"
+            f"Direct clause search found nothing (0 matches) for '{clause_num}', "
+            "falling back to hybrid fuzzy search"
         )
         from src.tools.llm_tools import get_embedding  # avoid circular import
 
         query_text = f"{source} {clause_num}"
         embedding = get_embedding(query_text)
+        
+        # Ensure normalization for the filter
+        reg_type = source.strip().upper() if source else None
+        
         fused_results = VectorQueries.hybrid_search(
             query_embedding=embedding,
             query_text=query_text,
             k=5,
-            regulation_type=source,
+            regulation_type=reg_type,
             namespace="public-regulations",
         )
 
         if not fused_results:
             return {
                 "found": False,
+                "confidence": 0.0,
                 "clause": None,
-                "context": (
-                    f"No results found for '{clause_reference}'. "
-                    "This clause may not be in the indexed documents."
-                ),
+                "context": f"No results found for '{clause_reference}'.",
             }
 
         context_parts = []
@@ -489,9 +492,11 @@ class VectorQueries:
             part_str = f" Part {part}" if part else ""
             context_parts.append(f"**Source: {src}{part_str}**\n\n{chunk.get('text', chunk.get('content', ''))}")
 
+        # For fallback, found=False indicates it's NOT an exact match
         primary = fused_results[0]
         return {
-            "found": True,
+            "found": False,
+            "confidence": float(primary.get("rrf_score", 0.05)), # Low relative score
             "clause": {
                 "reference": clause_reference,
                 "source": primary.get("metadata", {}).get("source"),
@@ -500,6 +505,7 @@ class VectorQueries:
                 "related_clauses": primary.get("metadata", {}).get("clause_references", []),
             },
             "context": "\n\n---\n\n".join(context_parts),
+            "fuzzy_results": fused_results
         }
 
     # ─── Legacy helpers (kept for backward compatibility) ─────────────────────

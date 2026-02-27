@@ -207,6 +207,47 @@ class GovGigOrchestrator:
             }
 
     
+    async def run_async(self, query: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Asynchronous non-streaming run for REST API."""
+        context = context or {}
+
+        initial_state: GovGigState = {
+            "messages": [],
+            "query": query,
+            "person_id": context.get("person_id"),
+            "current_date": context.get("current_date", datetime.now().strftime("%A, %B %d, %Y")),
+            "chat_history": context.get("history", []),
+            "cot_enabled": context.get("cot", False),
+
+            # Classifier fields
+            "query_intent": None,
+            "detected_clause_ref": None,
+            "detected_reg_type": None,
+
+            "retrieved_documents": [],
+            "tool_calls": [],
+            "thought_process": [],
+            "agent_path": [],
+            "regulation_types_used": [],
+            "errors": []
+        }
+
+        # Configuration for persistence
+        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
+
+        # Run graph asynchronously
+        result = await self.app.ainvoke(initial_state, config=config)
+
+        return {
+            "response":        result.get("generated_response"),
+            "documents":       result.get("retrieved_documents", []),
+            "confidence":      result.get("confidence_score"),
+            "agent_path":      result.get("agent_path", []),
+            "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
+            "regulation_types": result.get("regulation_types_used", []),
+            "errors":          result.get("errors", []),
+        }
+
     async def run(
         self, 
         query: str, 
