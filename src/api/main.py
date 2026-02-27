@@ -12,7 +12,7 @@ from datetime import datetime
 
 from src.config import settings
 from src.agents.orchestrator import GovGigOrchestrator
-from src.db.connection import test_connection, close_db_pool
+from src.db.connection import test_connection, close_db_pool, CheckpointerManager
 from src.db.queries import VectorQueries
 
 # Configure logging
@@ -70,7 +70,8 @@ class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, description="User query")
     person_id: Optional[str] = Field(None, description="User ID for personalization")
     history: List[Dict[str, str]] = Field(default_factory=list, description="Chat history")
-    cot: bool = Field(default=False, description="Enable Chain-of-Thought reasoning")
+    thread_id: Optional[str] = Field(None, description="Thread ID for conversation persistence")
+    cot: bool = Field(default=True, description="Enable Chain-of-Thought reasoning")
 
 
 class QueryResponse(BaseModel):
@@ -107,18 +108,30 @@ async def startup_event():
     """Run on application startup"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     
-    # Test database connection
+    # Initialize cache table and database connection
     db_ok = test_connection()
+    if db_ok:
+        VectorQueries.init_cache_table()
+    
     if not db_ok:
         logger.warning("Database connection test failed at startup")
     else:
-        logger.info("Database connection verified")
+        # Initialize checkpointer and update orchestrator
+        try:
+            checkpointer = await CheckpointerManager.get_checkpointer()
+            global orchestrator
+            orchestrator = GovGigOrchestrator(checkpointer=checkpointer)
+            logger.info("Orchestrator re-initialized with Postgres checkpointer")
+        except Exception as e:
+            logger.error(f"Failed to initialize checkpointer: {e}")
+            logger.warning("Running orchestrator without persistence")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Run on application shutdown"""
     logger.info("Shutting down application")
+    await CheckpointerManager.close()
     close_db_pool()
 
 
@@ -170,6 +183,7 @@ async def query_endpoint(request: QueryRequest):
     try:
         context = {
             "person_id": request.person_id,
+            "thread_id": request.thread_id or request.person_id or "default_thread",
             "history": request.history,
             "cot": request.cot,
             "current_date": datetime.now().strftime("%A, %B %d, %Y")
@@ -177,8 +191,17 @@ async def query_endpoint(request: QueryRequest):
         
         logger.info(f"Processing query: {request.query[:100]}...")
         
+        # 1. Check Cache
+        cached_result = VectorQueries.get_cached_response(request.query, request.cot)
+        if cached_result:
+            return QueryResponse(**cached_result)
+
+        # 2. If no cache, run orchestrator
         # Run orchestrator synchronously in threadpool to avoid event loop starvation
         result = await run_in_threadpool(orchestrator.run_sync, request.query, context)
+        
+        # 3. Store in Cache
+        VectorQueries.set_cached_response(request.query, result, request.cot)
         
         return QueryResponse(**result)
         
@@ -220,8 +243,9 @@ async def websocket_chat(websocket: WebSocket):
             
             context = {
                 "person_id": data.get("person_id"),
+                "thread_id": data.get("thread_id") or data.get("person_id") or "default_thread",
                 "history": data.get("history", []),
-                "cot": data.get("cot", False),
+                "cot": data.get("cot", True),
                 "current_date": datetime.now().strftime("%A, %B %d, %Y")
             }
             

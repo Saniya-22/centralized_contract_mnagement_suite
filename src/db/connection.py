@@ -3,9 +3,11 @@
 import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
-from contextlib import contextmanager
-from typing import Generator, Optional
+from contextlib import asynccontextmanager, contextmanager
+from typing import Generator, Optional, AsyncGenerator
 import logging
+from psycopg_pool import AsyncConnectionPool
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from src.config import settings
 
@@ -110,6 +112,38 @@ def get_db_connection() -> Generator:
     finally:
         if conn:
             _db_pool.return_connection(conn)
+
+
+class CheckpointerManager:
+    """Manages the lifecycle of the LangGraph Postgres checkpointer."""
+    
+    _pool: Optional[AsyncConnectionPool] = None
+    _checkpointer: Optional[AsyncPostgresSaver] = None
+
+    @classmethod
+    async def get_checkpointer(cls) -> AsyncPostgresSaver:
+        """Initialize and return the checkpointer."""
+        if cls._checkpointer is None:
+            logger.info("Initializing LangGraph Postgres checkpointer")
+            cls._pool = AsyncConnectionPool(
+                conninfo=settings.database_url,
+                max_size=settings.PG_POOL_MAX,
+                kwargs={"autocommit": True}
+            )
+            cls._checkpointer = AsyncPostgresSaver(cls._pool)
+            # Ensure tables are created
+            await cls._checkpointer.setup()
+            logger.info("LangGraph Postgres checkpointer initialized")
+        return cls._checkpointer
+
+    @classmethod
+    async def close(cls):
+        """Close the checkpointer pool."""
+        if cls._pool:
+            await cls._pool.close()
+            cls._pool = None
+            cls._checkpointer = None
+            logger.info("LangGraph Postgres checkpointer pool closed")
 
 
 from fastapi.concurrency import run_in_threadpool

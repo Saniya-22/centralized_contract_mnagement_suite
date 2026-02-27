@@ -20,18 +20,16 @@ logger = logging.getLogger(__name__)
 class GovGigOrchestrator:
     """Main orchestrator for the GovGig multi-agent system."""
     
-    def __init__(self):
+    def __init__(self, checkpointer=None):
         logger.info("Initializing GovGigOrchestrator")
 
         # Synthesizer: use gpt-4o-mini (SYNTHESIZER_MODEL) instead of gpt-4o.
-        # gpt-4o:      ~70  tokens/s → 600 tokens ≈ 8-12s
-        # gpt-4o-mini: ~300 tokens/s → 600 tokens ≈  2-3s  (3-5x speedup)
         self.synthesizer_llm = ChatOpenAI(
             model=settings.SYNTHESIZER_MODEL,
             api_key=settings.OPENAI_API_KEY,
             temperature=settings.TEMPERATURE,
             streaming=True,
-            max_tokens=800,   # gpt-4o-mini is fast enough to afford slightly more
+            max_tokens=800,
         )
 
         # Initialize agents
@@ -39,9 +37,10 @@ class GovGigOrchestrator:
 
         # Build and compile graph
         self.graph = self._build_graph()
-        self.app = self.graph.compile()
+        self.checkpointer = checkpointer
+        self.app = self.graph.compile(checkpointer=checkpointer)
 
-        logger.info("GovGigOrchestrator initialized successfully")
+        logger.info(f"GovGigOrchestrator initialized successfully (persistence={'enabled' if checkpointer else 'disabled'})")
     
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
@@ -248,9 +247,12 @@ class GovGigOrchestrator:
         
         logger.info(f"Starting orchestrator run for query: {query[:100]}...")
         
+        # Configuration for persistence
+        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
+        
         try:
             # Stream events from graph using astream_events to catch tokens
-            async for event in self.app.astream_events(initial_state, version="v1"):
+            async for event in self.app.astream_events(initial_state, config=config, version="v1"):
                 kind = event["event"]
 
                 # Handle node completion (steps)
@@ -327,9 +329,12 @@ class GovGigOrchestrator:
             "errors": []
         }
 
+        # Configuration for persistence
+        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
+
         # Run graph synchronously — delta returns + operator.add reducers ensure
         # each document is accumulated exactly once, so no dedup needed here.
-        result = self.app.invoke(initial_state)
+        result = self.app.invoke(initial_state, config=config)
 
         return {
             "response":        result.get("generated_response"),

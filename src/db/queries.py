@@ -14,6 +14,9 @@ import logging
 
 from src.db.connection import get_db_connection
 from src.config import settings
+import json
+import hashlib
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -557,3 +560,80 @@ class VectorQueries:
         except Exception as e:
             logger.error(f"Get surrounding chunks failed: {e}")
             raise
+
+    # ─── API Response Caching ────────────────────────────────────────────────
+
+    @staticmethod
+    def init_cache_table():
+        """Ensure the api_response_cache table exists."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS api_response_cache (
+            query_hash TEXT PRIMARY KEY,
+            query_text TEXT,
+            response_data JSONB,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP WITH TIME ZONE
+        );
+        CREATE INDEX IF NOT EXISTS idx_cache_expires_at ON api_response_cache (expires_at);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    logger.info("API response cache table verified")
+        except Exception as e:
+            logger.error(f"Failed to init cache table: {e}")
+
+    @staticmethod
+    def get_cached_response(query: str, cot: bool = True) -> Optional[Dict[str, Any]]:
+        """Retrieve a cached response if valid and not expired."""
+        # Simple hash of query + cot setting
+        key = f"{query.strip().lower()}|cot:{cot}"
+        query_hash = hashlib.sha256(key.encode()).hexdigest()
+
+        sql = """
+        SELECT response_data
+        FROM api_response_cache
+        WHERE query_hash = %s
+          AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, (query_hash,))
+                    result = cursor.fetchone()
+                    if result:
+                        logger.info(f"Cache hit for query: {query[:50]}...")
+                        return result["response_data"]
+            return None
+        except Exception as e:
+            logger.error(f"Cache lookup failed: {e}")
+            return None
+
+    @staticmethod
+    def set_cached_response(query: str, response: Dict[str, Any], cot: bool = True, ttl_hours: int = 24):
+        """Store a response in the cache with a TTL."""
+        key = f"{query.strip().lower()}|cot:{cot}"
+        query_hash = hashlib.sha256(key.encode()).hexdigest()
+        expires_at = datetime.now() + timedelta(hours=ttl_hours)
+
+        sql = """
+        INSERT INTO api_response_cache (query_hash, query_text, response_data, expires_at)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (query_hash) DO UPDATE
+        SET response_data = EXCLUDED.response_data,
+            expires_at = EXCLUDED.expires_at,
+            created_at = CURRENT_TIMESTAMP;
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (
+                        query_hash,
+                        query,
+                        json.dumps(response),
+                        expires_at
+                    ))
+                    logger.debug(f"Cached response for query: {query[:50]}...")
+        except Exception as e:
+            logger.error(f"Failed to cache response: {e}")

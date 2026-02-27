@@ -7,11 +7,15 @@ Python backend for GovGig AI using LangGraph for multi-agent orchestration and F
 This is a **Phase 1** implementation that includes:
 
 - ✅ **LangGraph Multi-Agent System**: Orchestrated workflows with state management
+- ✅ **Query Classifier (Router)**: Smart intent categorization (e.g. `clause_lookup`, `regulation_search`)
+- ✅ **Conversation Persistence**: LangGraph state stored in PostgreSQL (Checkpointing)
+- ✅ **API Response Caching**: Postgres-based caching for identical queries (24h TTL)
 - ✅ **Data Retrieval Agent**: Vector search with hybrid (dense + sparse) embeddings
+- ✅ **Direct Clause Lookup**: Optimized database fetching for exact clause references
 - ✅ **FastAPI Backend**: REST and WebSocket APIs
 - ✅ **PostgreSQL + pgvector**: Existing vector database integration
 - ✅ **Streaming Support**: Real-time response streaming
-- ✅ **Chain-of-Thought**: Optional reasoning mode
+- ✅ **Chain-of-Thought**: reasoning mode enabled by default
 - ⏳ **Additional Agents**: Document analysis, generation (coming in Phase 2+)
 
 ## 🏗️ Architecture
@@ -188,9 +192,10 @@ Query regulatory documents
 ```json
 {
   "query": "What are the requirements for cost accounting standards?",
+  "thread_id": "session_abc_123",
   "person_id": "user123",
   "history": [],
-  "cot": false
+  "cot": true
 }
 ```
 
@@ -225,6 +230,39 @@ Streaming chat endpoint
 {"type": "complete", "data": {"response": "..."}}
 {"type": "done", "data": "[DONE]"}
 ```
+
+### Direct Clause Lookup API
+Fast access to a specific clause without executing the LLM and RAG pipeline.
+
+#### `GET /api/v1/clause/{clause_reference}`
+
+**Example:**
+```bash
+curl http://localhost:8000/api/v1/clause/FAR%2052.219-8
+```
+
+**Response:**
+```json
+{
+  "found": true,
+  "clause_reference": "FAR 52.219-8",
+  "clause": { ... },
+  "context": "..."
+}
+```
+
+## ⚡ Performance & Persistence
+
+### API Caching
+The application uses PostgreSQL to store a cache of API responses.
+- **Mechanism:** Queries are hashed (SHA-256) and stored with their final JSON response.
+- **TTL:** Default expiration is **24 hours**.
+- **Impact:** Repeat queries return in **< 50ms**, bypassing the entire LLM pipeline.
+
+### Conversation Persistence
+Using LangGraph's `PostgresSaver`, all conversation states are persisted.
+- **Threads:** Use the `thread_id` field in requests to maintain state across different sessions.
+- **Resilience:** Conversations can be resumed even after server restarts.
 
 ## 🔧 Configuration
 
