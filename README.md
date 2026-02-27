@@ -8,6 +8,7 @@ This is a **Phase 1** implementation that includes:
 
 - ✅ **LangGraph Multi-Agent System**: Orchestrated workflows with state management
 - ✅ **Query Classifier (Router)**: Smart intent categorization (e.g. `clause_lookup`, `regulation_search`)
+- ✅ **JWT Authentication**: Secured endpoints with token-based access
 - ✅ **Conversation Persistence**: LangGraph state stored in PostgreSQL (Checkpointing)
 - ✅ **API Response Caching**: Postgres-based caching for identical queries (24h TTL)
 - ✅ **Data Retrieval Agent**: Vector search with hybrid (dense + sparse) embeddings
@@ -186,7 +187,7 @@ pytest tests/test_vector_search.py -v
 Health check endpoint
 
 #### `POST /api/v1/query`
-Query regulatory documents
+Query regulatory documents (**Requires JWT `Authorization: Bearer <token>` header**)
 
 **Request:**
 ```json
@@ -214,11 +215,12 @@ Query regulatory documents
 ### WebSocket API
 
 #### `WS /ws/chat`
-Streaming chat endpoint
+Streaming chat endpoint (**Requires `token` field in the first message**)
 
 **Send:**
 ```json
 {
+  "token": "your_jwt_token",
   "query": "Find safety requirements for excavation",
   "cot": true
 }
@@ -235,10 +237,11 @@ Streaming chat endpoint
 Fast access to a specific clause without executing the LLM and RAG pipeline.
 
 #### `GET /api/v1/clause/{clause_reference}`
+**Requires JWT `Authorization: Bearer <token>` header**
 
 **Example:**
 ```bash
-curl http://localhost:8000/api/v1/clause/FAR%2052.219-8
+curl -H "Authorization: Bearer <your_jwt_token>" http://localhost:8000/api/v1/clause/FAR%2052.219-8
 ```
 
 **Response:**

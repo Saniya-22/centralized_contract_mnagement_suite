@@ -1,6 +1,6 @@
 """FastAPI application with WebSocket and REST endpoints"""
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
@@ -14,6 +14,7 @@ from src.config import settings
 from src.agents.orchestrator import GovGigOrchestrator
 from src.db.connection import test_connection, close_db_pool, CheckpointerManager
 from src.db.queries import VectorQueries
+from src.api.auth import get_current_user, get_optional_user
 
 # Configure logging
 logging.basicConfig(
@@ -172,8 +173,11 @@ async def root():
     response_model=QueryResponse,
     tags=["Query"]
 )
-async def query_endpoint(request: QueryRequest):
-    """Process a query and return results"""
+async def query_endpoint(
+    request: QueryRequest, 
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Process a query and return results (Authenticated)"""
     if orchestrator is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -181,9 +185,10 @@ async def query_endpoint(request: QueryRequest):
         )
     
     try:
+        user_id = user.get("sub") or user.get("id") or user.get("user_id")
         context = {
-            "person_id": request.person_id,
-            "thread_id": request.thread_id or request.person_id or "default_thread",
+            "person_id": request.person_id or user_id,
+            "thread_id": request.thread_id or request.person_id or user_id or "default_thread",
             "history": request.history,
             "cot": request.cot,
             "current_date": datetime.now().strftime("%A, %B %d, %Y")
@@ -229,10 +234,32 @@ async def websocket_chat(websocket: WebSocket):
         return
     
     try:
+        authenticated = False
+        user_id = None
+
         while True:
             # Receive query from client
             data = await websocket.receive_json()
             
+            # 1. Handle Authentication (if not yet authenticated)
+            if not authenticated:
+                token = data.get("token")
+                if not token:
+                    await websocket.send_json({"type": "error", "data": {"message": "Authentication required. Please provide a 'token'."}})
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
+                
+                try:
+                    from jose import jwt
+                    payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+                    user_id = payload.get("sub") or payload.get("id")
+                    authenticated = True
+                    logger.info(f"WebSocket authenticated for user: {user_id}")
+                except Exception as e:
+                    await websocket.send_json({"type": "error", "data": {"message": "Invalid token"}})
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
+
             query = data.get("query")
             if not query:
                 await websocket.send_json({
@@ -242,8 +269,8 @@ async def websocket_chat(websocket: WebSocket):
                 continue
             
             context = {
-                "person_id": data.get("person_id"),
-                "thread_id": data.get("thread_id") or data.get("person_id") or "default_thread",
+                "person_id": data.get("person_id") or user_id,
+                "thread_id": data.get("thread_id") or data.get("person_id") or user_id or "default_thread",
                 "history": data.get("history", []),
                 "cot": data.get("cot", True),
                 "current_date": datetime.now().strftime("%A, %B %d, %Y")
@@ -287,8 +314,11 @@ async def websocket_chat(websocket: WebSocket):
     response_model=ClauseResponse,
     tags=["Clause Lookup"]
 )
-async def clause_lookup(clause_reference: str):
-    """Look up a specific regulation clause by its reference number.
+async def clause_lookup(
+    clause_reference: str,
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Look up a specific regulation clause by its reference number (Authenticated).
 
     Supports FAR, DFARS, and EM385 clause references.
 
