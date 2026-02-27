@@ -5,6 +5,7 @@ resource "aws_lb" "main" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
+  idle_timeout       = 300
 
   enable_deletion_protection = false
 
@@ -26,7 +27,7 @@ resource "aws_lb_target_group" "main" {
     healthy_threshold   = 2
     interval            = 30
     matcher             = "200"
-    path                = "/health"
+    path                = "/api/v1/health"
     port                = "traffic-port"
     protocol            = "HTTP"
     timeout             = 5
