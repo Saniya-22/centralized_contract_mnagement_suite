@@ -317,10 +317,6 @@ Key configuration options in `.env`:
 | `RETRIEVAL_TOP_K` | `6` | Primary retrieval depth |
 | `RAG_TOKEN_LIMIT` | `3200` | Max context tokens before synthesis |
 | `REFLECTION_THRESHOLD` | `0.35` | Reflection trigger threshold |
-| `PILOT_SAFE_MODE` | `true` | Enables pilot evidence guardrails |
-| `PILOT_MIN_DOCS` | `3` | Baseline minimum docs (clause lookup path is intent-tuned) |
-| `PILOT_MIN_TOP_SCORE` | `0.30` | Minimum top normalized evidence score |
-| `PILOT_MIN_AVG_SCORE` | `0.20` | Minimum average normalized evidence score |
 | `MAX_ITERATIONS` | `10` | Max LangGraph iterations |
 | `LOG_LEVEL` | `INFO` | Logging level |
 

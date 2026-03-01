@@ -56,11 +56,6 @@ class Settings(BaseSettings):
     SELF_HEALING_MAX_QUERIES: int = 1             # Max expanded queries to execute
     SELF_HEALING_MAX_DOCS: int = 4                # Max additional docs added from self-healing
     MAX_DOC_CHARS_FOR_SYNTHESIS: int = 1200       # Per-document content trim before prompt assembly
-    PILOT_SAFE_MODE: bool = True                  # Enforce evidence/citation guardrails
-    PILOT_MIN_DOCS: int = 3                       # Minimum docs required for grounded answer
-    PILOT_MIN_TOP_SCORE: float = 0.30             # Minimum normalized top doc score
-    PILOT_MIN_AVG_SCORE: float = 0.20             # Minimum normalized average score
-
     # LLM Models (separate concerns)
     # MODEL_NAME:       used for the DataRetrieval tool-selector fallback
     # SYNTHESIZER_MODEL: used by _synthesize_response — gpt-4o-mini is 3-5x faster

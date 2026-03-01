@@ -6,7 +6,6 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from typing import Literal, AsyncIterator, Dict, Any
 import logging
 from datetime import datetime
-import re
 
 from src.state.graph_state import GovGigState
 from src.agents.data_retrieval import DataRetrievalAgent
@@ -67,41 +66,12 @@ class GovGigOrchestrator:
         }
 
     @staticmethod
-    def _has_citation_markers(text: str) -> bool:
-        if not text:
-            return False
-        return bool(
-            re.search(r"\b(FAR|DFARS|EM\s*385)\b\s*\d", text, flags=re.IGNORECASE)
-            or re.search(r"\[[^\]]+\]", text)
-        )
-
-    @staticmethod
     def _safe_fallback_message() -> str:
         return (
             "I don’t have sufficient high-confidence evidence in the retrieved regulatory text "
             "to provide a reliable answer. Please refine the query with regulation type/section "
             "(e.g., FAR/DFARS/EM385 clause), and I’ll return a fully cited response."
         )
-
-    def _evidence_thresholds_for_state(self, state: GovGigState) -> tuple[int, float, float]:
-        """Resolve evidence thresholds with intent-aware guardrail tuning."""
-        min_docs = int(settings.PILOT_MIN_DOCS)
-        min_top = float(settings.PILOT_MIN_TOP_SCORE)
-        min_avg = float(settings.PILOT_MIN_AVG_SCORE)
-
-        query_intent = state.get("query_intent")
-        detected_clause_ref = state.get("detected_clause_ref")
-        is_clause_lookup = (
-            query_intent == QueryIntent.CLAUSE_LOOKUP.value
-            or bool(detected_clause_ref)
-        )
-
-        # Clause lookups frequently return one strong, exact match document.
-        # Requiring >=3 docs for this path creates false negative fallbacks.
-        if is_clause_lookup:
-            min_docs = 1
-
-        return min_docs, min_top, min_avg
     
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
@@ -225,24 +195,6 @@ class GovGigOrchestrator:
                 f"docs={int(evidence['doc_count'])}, "
                 f"top={evidence['top_norm']:.2f}, avg={evidence['avg_norm']:.2f}"
             )
-            if settings.PILOT_SAFE_MODE:
-                min_docs, min_top, min_avg = self._evidence_thresholds_for_state(state)
-                weak = (
-                    evidence["doc_count"] < min_docs
-                    or evidence["top_norm"] < min_top
-                    or evidence["avg_norm"] < min_avg
-                )
-                if weak:
-                    logger.warning("Pilot safe mode blocked low-evidence synthesis")
-                    new_agent_path.append(
-                        "Synthesizer: blocked due to low-evidence guardrail "
-                        f"(need docs>={min_docs}, top>={min_top:.2f}, avg>={min_avg:.2f})"
-                    )
-                    return {
-                        "generated_response": self._safe_fallback_message(),
-                        "confidence_score": float(evidence["avg_norm"]),
-                        "agent_path": new_agent_path,
-                    }
 
             formatted_docs = format_documents(documents, max_tokens=settings.RAG_TOKEN_LIMIT)
             system_prompt   = get_synthesizer_prompt(state, documents)
@@ -259,15 +211,6 @@ class GovGigOrchestrator:
             ]
             response = self.synthesizer_llm.invoke(messages)
 
-            if settings.PILOT_SAFE_MODE and not self._has_citation_markers(response.content):
-                logger.warning("Pilot safe mode rejected uncited synthesis output")
-                new_agent_path.append("Synthesizer: blocked due to missing citation markers")
-                return {
-                    "generated_response": self._safe_fallback_message(),
-                    "confidence_score": float(evidence["avg_norm"]),
-                    "agent_path": new_agent_path,
-                }
-            
             elapsed = _time.perf_counter() - _t0_node
             logger.info(f"[Telemetry] Node 'synthesizer' completed in {elapsed:.2f}s")
 

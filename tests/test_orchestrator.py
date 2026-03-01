@@ -68,8 +68,7 @@ def test_synthesize_response_success(mock_format, mock_prompt, orchestrator):
     mock_response.content = "Synthesized Answer"
     orchestrator.synthesizer_llm.invoke.return_value = mock_response
     
-    with patch('src.agents.orchestrator.settings.PILOT_SAFE_MODE', False):
-        result = orchestrator._synthesize_response(state)
+    result = orchestrator._synthesize_response(state)
     
     assert result["generated_response"] == "Synthesized Answer"
     assert result["confidence_score"] == 0.8
@@ -91,8 +90,8 @@ def test_synthesize_response_no_docs(orchestrator):
 
 @patch('src.agents.orchestrator.get_synthesizer_prompt')
 @patch('src.agents.orchestrator.format_documents')
-def test_clause_lookup_allows_single_high_conf_doc_in_safe_mode(mock_format, mock_prompt, orchestrator):
-    """Clause lookup path should not require 3 docs when confidence is high."""
+def test_clause_lookup_allows_single_high_conf_doc(mock_format, mock_prompt, orchestrator):
+    """Clause lookup path should synthesize directly from exact match evidence."""
     mock_format.return_value = "Formatted Clause Doc"
     mock_prompt.return_value = "System Prompt"
 
