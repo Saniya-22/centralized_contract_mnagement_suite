@@ -66,8 +66,8 @@ resource "aws_ecs_task_definition" "main" {
           valueFrom = "${aws_secretsmanager_secret.db.arn}:password::"
         },
         {
-          name      = "JWT_SECRET"
-          valueFrom = "${aws_secretsmanager_secret.auth.arn}:JWT_SECRET::"
+          name      = "JWT_SECRET_KEY"
+          valueFrom = "${aws_secretsmanager_secret.auth.arn}:JWT_SECRET_KEY::"
         },
         {
           name      = "ADMIN_API_KEY"
@@ -91,6 +91,10 @@ resource "aws_ecs_task_definition" "main" {
         {
           name  = "PG_SSLMODE"
           value = "require"
+        },
+        {
+          name  = "CORS_ORIGINS"
+          value = jsonencode(var.cors_origins)
         }
       ]
 
@@ -104,7 +108,7 @@ resource "aws_ecs_task_definition" "main" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "wget -q --spider http://localhost:8000/api/v1/health || exit 1"]
+        command     = ["CMD-SHELL", "wget -q --spider http://localhost:${var.container_port}/api/v1/health || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -116,6 +120,12 @@ resource "aws_ecs_task_definition" "main" {
   tags = {
     Name = "${var.project_name}-${var.environment}"
   }
+
+  depends_on = [
+    aws_secretsmanager_secret_version.env,
+    aws_secretsmanager_secret_version.auth,
+    aws_secretsmanager_secret_version.db
+  ]
 }
 
 # ECS Service
@@ -151,8 +161,42 @@ resource "aws_ecs_service" "main" {
   tags = {
     Name = "${var.project_name}-${var.environment}-service"
   }
+}
 
-  lifecycle {
-    ignore_changes = [desired_count]
+resource "aws_appautoscaling_target" "ecs_service" {
+  max_capacity       = var.max_capacity
+  min_capacity       = var.min_capacity
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.main.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "ecs_cpu" {
+  name               = "${var.project_name}-${var.environment}-cpu-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_service.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_service.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_service.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value = var.target_cpu_utilization
+  }
+}
+
+resource "aws_appautoscaling_policy" "ecs_memory" {
+  name               = "${var.project_name}-${var.environment}-memory-scaling"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_service.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_service.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_service.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+    target_value = var.target_memory_utilization
   }
 }

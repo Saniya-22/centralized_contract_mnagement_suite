@@ -8,8 +8,15 @@ resource "aws_secretsmanager_secret" "env" {
   }
 }
 
-# Note: Secret values should be populated manually or via CI/CD
-# aws secretsmanager put-secret-value --secret-id daedalus/staging/env --secret-string '{"MONGO_URI":"...", ...}'
+resource "aws_secretsmanager_secret_version" "env" {
+  secret_id = aws_secretsmanager_secret.env.id
+  secret_string = jsonencode({
+    OPENAI_API_KEY = var.openai_api_key
+    MODEL_NAME     = var.model_name
+  })
+}
+
+# Secret versions are managed by Terraform variables (recommended via CI/CD secrets).
 
 # Auth secrets (JWT, admin key, cookie secret)
 resource "aws_secretsmanager_secret" "auth" {
@@ -19,6 +26,15 @@ resource "aws_secretsmanager_secret" "auth" {
   tags = {
     Name = "${var.project_name}-${var.environment}-auth"
   }
+}
+
+resource "aws_secretsmanager_secret_version" "auth" {
+  secret_id = aws_secretsmanager_secret.auth.id
+  secret_string = jsonencode({
+    JWT_SECRET_KEY = var.jwt_secret_key
+    ADMIN_API_KEY  = var.admin_api_key
+    COOKIE_SECRET  = var.cookie_secret
+  })
 }
 
 # CloudWatch Log Group

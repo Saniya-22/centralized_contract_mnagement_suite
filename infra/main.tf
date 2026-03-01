@@ -8,13 +8,8 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket         = "govgig-terraform-state"
-    key            = "daedalus/staging/terraform.tfstate"
-    region         = "us-west-2"
-    encrypt        = true
-    dynamodb_table = "govgig-terraform-locks"
-  }
+  # Configure backend via -backend-config (see infra/backend.hcl.example).
+  backend "s3" {}
 }
 
 provider "aws" {

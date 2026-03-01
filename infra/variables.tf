@@ -67,13 +67,78 @@ variable "desired_count" {
 variable "acm_certificate_arn" {
   description = "ACM certificate ARN for HTTPS"
   type        = string
-  default     = "arn:aws:acm:us-west-2:021891572695:certificate/38927297-28f6-44a8-a4af-f6451cf0d89c"
 }
 
 variable "domain_name" {
   description = "Domain name for the service"
   type        = string
   default     = "staging-ai-daedalus.govgig.us"
+}
+
+variable "route53_zone_id" {
+  description = "Route53 hosted zone ID for domain_name (optional for DNS record creation)"
+  type        = string
+  default     = ""
+}
+
+variable "cors_origins" {
+  description = "Allowed CORS origins passed to the container as JSON array"
+  type        = list(string)
+  default     = ["http://localhost:3000", "http://localhost:3001"]
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API key stored in env secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "model_name" {
+  description = "Primary model name"
+  type        = string
+  default     = "gpt-4o-mini"
+}
+
+variable "jwt_secret_key" {
+  description = "JWT secret key used by API auth"
+  type        = string
+  sensitive   = true
+}
+
+variable "admin_api_key" {
+  description = "Admin API key for operational endpoints"
+  type        = string
+  sensitive   = true
+}
+
+variable "cookie_secret" {
+  description = "Cookie/session secret value"
+  type        = string
+  sensitive   = true
+}
+
+variable "min_capacity" {
+  description = "Minimum ECS desired task count for autoscaling"
+  type        = number
+  default     = 1
+}
+
+variable "max_capacity" {
+  description = "Maximum ECS desired task count for autoscaling"
+  type        = number
+  default     = 3
+}
+
+variable "target_cpu_utilization" {
+  description = "Target average CPU utilization percent for ECS autoscaling"
+  type        = number
+  default     = 70
+}
+
+variable "target_memory_utilization" {
+  description = "Target average memory utilization percent for ECS autoscaling"
+  type        = number
+  default     = 75
 }
 
 # RDS PostgreSQL

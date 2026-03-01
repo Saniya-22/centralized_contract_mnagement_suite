@@ -1,0 +1,25 @@
+aws_region           = "us-west-2"
+environment          = "staging"
+project_name         = "daedalus"
+domain_name          = "staging-ai-daedalus.govgig.us"
+acm_certificate_arn  = "arn:aws:acm:us-west-2:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+route53_zone_id      = "Z1234567890ABC"
+
+desired_count              = 1
+min_capacity               = 1
+max_capacity               = 3
+target_cpu_utilization     = 70
+target_memory_utilization  = 75
+
+cors_origins = [
+  "https://staging-ai-daedalus.govgig.us",
+  "http://localhost:3000",
+  "http://localhost:3001",
+]
+
+# Sensitive values should be passed via secure CI/CD variable management.
+openai_api_key = "replace-me"
+jwt_secret_key = "replace-me"
+admin_api_key  = "replace-me"
+cookie_secret  = "replace-me"
+db_password    = "replace-me"

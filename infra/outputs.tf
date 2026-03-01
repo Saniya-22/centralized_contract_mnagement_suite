@@ -48,6 +48,11 @@ output "service_url" {
   value       = "https://${var.domain_name}"
 }
 
+output "route53_record_fqdn" {
+  description = "Route53 record FQDN (empty when route53_zone_id is not provided)"
+  value       = length(aws_route53_record.service) > 0 ? aws_route53_record.service[0].fqdn : ""
+}
+
 # RDS Outputs
 output "rds_endpoint" {
   description = "RDS endpoint"
