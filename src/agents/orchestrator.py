@@ -6,6 +6,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from typing import Literal, AsyncIterator, Dict, Any
 import logging
 from datetime import datetime
+import re
 
 from src.state.graph_state import GovGigState
 from src.agents.data_retrieval import DataRetrievalAgent
@@ -19,6 +20,22 @@ logger = logging.getLogger(__name__)
 
 class GovGigOrchestrator:
     """Main orchestrator for the GovGig multi-agent system."""
+    _CITATION_RE = re.compile(r"(\b(FAR|DFARS|EM\s*385)\b\s*\d+|\[[^\]]+\])", flags=re.IGNORECASE)
+    _CLAIM_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+    _WORD_RE = re.compile(r"[a-z0-9][a-z0-9\-]{2,}")
+    _STOPWORDS = {
+        "the", "and", "for", "with", "that", "this", "from", "are", "was", "were",
+        "have", "has", "had", "not", "but", "you", "your", "about", "into", "while",
+        "where", "when", "what", "which", "who", "how", "they", "them", "their", "its",
+        "can", "may", "must", "shall", "should", "would", "could", "than", "then",
+        "there", "here", "also", "such", "each", "any", "all", "only", "other",
+        "under", "over", "between", "within", "through", "into", "onto", "our", "out",
+        "per", "via", "use", "using", "used", "being", "been", "more", "most",
+    }
+    _LOW_CONFIDENCE_LABEL = (
+        "Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. "
+        "Please verify the cited clauses before final use.\n\n"
+    )
     
     def __init__(self, checkpointer=None):
         logger.info("Initializing GovGigOrchestrator")
@@ -64,6 +81,100 @@ class GovGigOrchestrator:
             "top_norm": float(norms[0] if norms else 0.0),
             "avg_norm": float(sum(norms) / len(norms)) if norms else 0.0,
         }
+
+    @classmethod
+    def _extract_claim_units(cls, text: str) -> list[str]:
+        if not text:
+            return []
+        units: list[str] = []
+        for chunk in cls._CLAIM_SPLIT_RE.split(text):
+            snippet = chunk.strip()
+            if not snippet:
+                continue
+            if snippet.startswith("#"):
+                continue
+            if len(snippet) < 30:
+                continue
+            if len(snippet.split()) < 6:
+                continue
+            units.append(snippet)
+        return units
+
+    @classmethod
+    def _citation_coverage(cls, text: str) -> float:
+        claims = cls._extract_claim_units(text)
+        if not claims:
+            return 1.0
+        cited = sum(1 for claim in claims if cls._CITATION_RE.search(claim))
+        return cited / len(claims)
+
+    @classmethod
+    def _content_tokens(cls, text: str) -> set[str]:
+        if not text:
+            return set()
+        tokens = {t for t in cls._WORD_RE.findall(text.lower()) if t not in cls._STOPWORDS}
+        return tokens
+
+    @classmethod
+    def _groundedness_score(cls, response_text: str, documents: list[dict]) -> float:
+        response_tokens = cls._content_tokens(response_text)
+        if not response_tokens:
+            return 0.0
+        corpus = []
+        for doc in documents:
+            content = doc.get("content") or doc.get("text") or ""
+            if content:
+                corpus.append(str(content))
+        doc_tokens = cls._content_tokens(" ".join(corpus))
+        if not doc_tokens:
+            return 0.0
+        overlap = len(response_tokens & doc_tokens)
+        return overlap / len(response_tokens)
+
+    def _assess_answer_quality(
+        self,
+        response_text: str,
+        documents: list[dict],
+        evidence: dict[str, float],
+        state: GovGigState,
+    ) -> dict[str, float | bool]:
+        citation_coverage = self._citation_coverage(response_text)
+        groundedness = self._groundedness_score(response_text, documents)
+        evidence_avg = float(evidence.get("avg_norm", 0.0))
+        is_clause_lookup = (
+            state.get("query_intent") == QueryIntent.CLAUSE_LOOKUP.value
+            or bool(state.get("detected_clause_ref"))
+        )
+        min_docs = 1.0 if is_clause_lookup else 2.0
+        quality_score = (
+            0.40 * evidence_avg
+            + 0.35 * groundedness
+            + 0.25 * citation_coverage
+        )
+
+        # Soft guardrails: annotate low confidence instead of blocking.
+        low_confidence = bool(
+            evidence.get("doc_count", 0.0) < min_docs
+            or evidence_avg < 0.20
+            or groundedness < 0.45
+            or citation_coverage < 0.45
+            or quality_score < 0.55
+        )
+
+        return {
+            "citation_coverage": round(citation_coverage, 4),
+            "groundedness_score": round(groundedness, 4),
+            "evidence_score": round(evidence_avg, 4),
+            "quality_score": round(quality_score, 4),
+            "low_confidence": low_confidence,
+        }
+
+    def _with_low_confidence_label(self, response_text: str, low_confidence: bool) -> str:
+        if not low_confidence:
+            return response_text
+        if response_text.startswith(self._LOW_CONFIDENCE_LABEL):
+            return response_text
+        return f"{self._LOW_CONFIDENCE_LABEL}{response_text}"
 
     @staticmethod
     def _safe_fallback_message() -> str:
@@ -186,6 +297,14 @@ class GovGigOrchestrator:
                 new_agent_path.append("Synthesizer: No documents — returning fallback")
                 return {
                     "generated_response": self._safe_fallback_message(),
+                    "quality_metrics": {
+                        "citation_coverage": 0.0,
+                        "groundedness_score": 0.0,
+                        "evidence_score": 0.0,
+                        "quality_score": 0.0,
+                        "low_confidence": True,
+                    },
+                    "low_confidence": True,
                     "agent_path": new_agent_path,
                 }
 
@@ -210,6 +329,11 @@ class GovGigOrchestrator:
                 HumanMessage(content=user_message),
             ]
             response = self.synthesizer_llm.invoke(messages)
+            quality_metrics = self._assess_answer_quality(response.content, documents, evidence, state)
+            final_response = self._with_low_confidence_label(
+                response.content,
+                bool(quality_metrics["low_confidence"]),
+            )
 
             elapsed = _time.perf_counter() - _t0_node
             logger.info(f"[Telemetry] Node 'synthesizer' completed in {elapsed:.2f}s")
@@ -219,14 +343,23 @@ class GovGigOrchestrator:
                 if documents else 0.0
             )
 
-            logger.info(f"Response synthesized: {len(response.content)} characters")
+            logger.info(f"Response synthesized: {len(final_response)} characters")
             new_agent_path.append(
-                f"Synthesizer: Generated {len(response.content)}-char response"
+                f"Synthesizer: quality score={quality_metrics['quality_score']:.2f}, "
+                f"citation_coverage={quality_metrics['citation_coverage']:.2f}, "
+                f"groundedness={quality_metrics['groundedness_score']:.2f}"
+            )
+            if quality_metrics["low_confidence"]:
+                new_agent_path.append("Synthesizer: low-confidence label applied")
+            new_agent_path.append(
+                f"Synthesizer: Generated {len(final_response)}-char response"
             )
 
             return {
-                "generated_response": response.content,
+                "generated_response": final_response,
                 "confidence_score":   float(avg_score),
+                "quality_metrics":    quality_metrics,
+                "low_confidence":     bool(quality_metrics["low_confidence"]),
                 "agent_path":         new_agent_path,
             }
 
@@ -236,6 +369,14 @@ class GovGigOrchestrator:
             new_agent_path.append(f"Synthesizer: ERROR — {exc}")
             return {
                 "generated_response": "An error occurred while generating the response. Please try again.",
+                "quality_metrics": {
+                    "citation_coverage": 0.0,
+                    "groundedness_score": 0.0,
+                    "evidence_score": 0.0,
+                    "quality_score": 0.0,
+                    "low_confidence": True,
+                },
+                "low_confidence": True,
                 "agent_path": new_agent_path,
                 "errors":     new_errors,
             }
@@ -262,6 +403,8 @@ class GovGigOrchestrator:
             "tool_calls": [],
             "thought_process": [],
             "agent_path": [],
+            "quality_metrics": None,
+            "low_confidence": None,
             "regulation_types_used": [],
             "errors": []
         }
@@ -276,6 +419,8 @@ class GovGigOrchestrator:
             "response":        result.get("generated_response"),
             "documents":       result.get("retrieved_documents", []),
             "confidence":      result.get("confidence_score"),
+            "quality_metrics": result.get("quality_metrics"),
+            "low_confidence":  result.get("low_confidence"),
             "agent_path":      result.get("agent_path", []),
             "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
             "regulation_types": result.get("regulation_types_used", []),
@@ -316,6 +461,8 @@ class GovGigOrchestrator:
             "tool_calls": [],
             "thought_process": [],
             "agent_path": [],
+            "quality_metrics": None,
+            "low_confidence": None,
             "regulation_types_used": [],
             "errors": []
         }
@@ -340,6 +487,8 @@ class GovGigOrchestrator:
                             "response": final_state.get('generated_response'),
                             "documents": final_state.get('retrieved_documents', []),
                             "confidence": final_state.get('confidence_score'),
+                            "quality_metrics": final_state.get('quality_metrics'),
+                            "low_confidence": final_state.get('low_confidence'),
                             "agent_path": final_state.get('agent_path', []),
                             "thought_process": final_state.get('thought_process', []) if final_state.get('cot_enabled') else None,
                             "regulation_types": final_state.get('regulation_types_used', []),
@@ -400,6 +549,8 @@ class GovGigOrchestrator:
             "tool_calls": [],
             "thought_process": [],
             "agent_path": [],
+            "quality_metrics": None,
+            "low_confidence": None,
             "regulation_types_used": [],
             "errors": []
         }
@@ -415,6 +566,8 @@ class GovGigOrchestrator:
             "response":        result.get("generated_response"),
             "documents":       result.get("retrieved_documents", []),
             "confidence":      result.get("confidence_score"),
+            "quality_metrics": result.get("quality_metrics"),
+            "low_confidence":  result.get("low_confidence"),
             "agent_path":      result.get("agent_path", []),
             "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
             "regulation_types": result.get("regulation_types_used", []),

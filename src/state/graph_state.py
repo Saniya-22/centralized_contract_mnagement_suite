@@ -42,6 +42,8 @@ class GovGigState(MessagesState):
     
     # Metadata
     confidence_score: Optional[float]
+    quality_metrics: Optional[Dict[str, Any]]
+    low_confidence: Optional[bool]
     regulation_types_used: Annotated[List[str], operator.add]
     
     # Error handling

@@ -79,6 +79,8 @@ class QueryResponse(BaseModel):
     response: str
     documents: List[Dict[str, Any]]
     confidence: Optional[float] = None
+    quality_metrics: Optional[Dict[str, Any]] = None
+    low_confidence: Optional[bool] = None
     agent_path: List[str]
     thought_process: Optional[List[str]] = None
     regulation_types: List[str]

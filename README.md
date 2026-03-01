@@ -26,7 +26,7 @@ This is a **Phase 1** implementation that includes:
 - ✅ **FastAPI Backend**: REST and WebSocket APIs
 - ✅ **PostgreSQL + pgvector**: Existing vector database integration
 - ✅ **Streaming Support**: Real-time response streaming
-- ✅ **Pilot Safe Mode Guardrails**: Evidence thresholds + citation checks before synthesis
+- ✅ **Pilot Quality Signals (Non-Blocking)**: `quality_metrics` + `low_confidence` output for reviewer visibility
 - ⏳ **Additional Agents**: Document analysis, generation (coming in Phase 2+)
 
 ## 🏗️ Architecture
@@ -205,6 +205,16 @@ python scripts/quality_gate.py \
   --report-out /tmp/quality_gate_report.json
 ```
 
+### Pilot Testing Notes
+
+- Reflection loop remains enabled for low-confidence retrieval recovery (`src/reflection/` + `src/agents/data_retrieval.py`).
+- Answers are not hard-blocked by pilot guardrails; instead API returns:
+  - `quality_metrics`: citation coverage, groundedness, evidence, composite quality.
+  - `low_confidence`: soft reviewer signal when answer grounding looks weak.
+- Recommended pilot workflow:
+  - Treat `low_confidence=true` responses as reviewer-required.
+  - Track pass-rate/fallback-rate/citation-rate from `scripts/quality_gate.py`.
+
 ## 📡 API Endpoints
 
 ### REST API
@@ -232,11 +242,21 @@ Query regulatory documents (**Requires JWT `Authorization: Bearer <token>` heade
   "response": "According to FAR 30.201...",
   "documents": [...],
   "confidence": 0.89,
+  "quality_metrics": {
+    "citation_coverage": 0.92,
+    "groundedness_score": 0.81,
+    "evidence_score": 0.64,
+    "quality_score": 0.78,
+    "low_confidence": false
+  },
+  "low_confidence": false,
   "agent_path": ["DataRetrievalAgent: Starting..."],
   "regulation_types": ["FAR"],
   "errors": []
 }
 ```
+
+`low_confidence=true` means the answer was still returned, but evidence/citation grounding looked weak and should be reviewed.
 
 ### WebSocket API
 
@@ -419,13 +439,15 @@ python -m src.api.main
 
 ## ✅ Current Validation Snapshot (March 1, 2026)
 
-- Python test suite: `34 passed`
+- Python test suite: `35 passed`
 - Reflection tests: `7/7 passed`
-- E2E quality gate (3 runs, 21 total cases): `PASS`
+- E2E quality gate (post soft-quality update, 7 cases): `PASS`
   - `pass_rate=100.00%`
   - `fallback_rate=0.00%`
   - `citation_rate=100.00%`
-  - `avg_latency=5.87s` (`p95=9.52s`, `max=9.57s`)
+  - `avg_latency=8.40s`
+- Pilot quality diagnostics (same 7-case set):
+  - `low_confidence` flagged in `2/7` responses (soft review signal, not blocked)
 
 ### Port Already in Use
 

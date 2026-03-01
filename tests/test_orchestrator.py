@@ -60,18 +60,29 @@ def test_synthesize_response_success(mock_format, mock_prompt, orchestrator):
     
     state = {
         "query": "test query",
-        "retrieved_documents": [{"content": "Doc 1", "score": 0.8}]
+        "retrieved_documents": [
+            {
+                "content": "Contractor must notify the contracting officer within 5 days [FAR 52.236-2].",
+                "score": 0.8
+            },
+            {
+                "content": "Notification timeline is five days from discovery [FAR 52.236-2].",
+                "score": 0.78
+            }
+        ]
     }
     
     # Mock LLM response
     mock_response = MagicMock(spec=AIMessage)
-    mock_response.content = "Synthesized Answer"
+    mock_response.content = "Contractor must notify the contracting officer within 5 days [FAR 52.236-2]."
     orchestrator.synthesizer_llm.invoke.return_value = mock_response
     
     result = orchestrator._synthesize_response(state)
     
-    assert result["generated_response"] == "Synthesized Answer"
-    assert result["confidence_score"] == 0.8
+    assert result["generated_response"] == mock_response.content
+    assert result["confidence_score"] == pytest.approx(0.79)
+    assert result["quality_metrics"]["low_confidence"] is False
+    assert result["low_confidence"] is False
     assert "Synthesizer: Generated" in result["agent_path"][-1]
 
 
@@ -99,17 +110,44 @@ def test_clause_lookup_allows_single_high_conf_doc(mock_format, mock_prompt, orc
         "query": "What does DFARS 252.204-7012 require?",
         "query_intent": QueryIntent.CLAUSE_LOOKUP.value,
         "detected_clause_ref": "DFARS 252.204-7012",
-        "retrieved_documents": [{"content": "Clause text", "score": 1.0}],
+        "retrieved_documents": [{
+            "content": "DFARS 252.204-7012 requires cyber incident reporting to DoD [DFARS 252.204-7012].",
+            "score": 1.0
+        }],
     }
 
     mock_response = MagicMock(spec=AIMessage)
-    mock_response.content = "DFARS 252.204-7012 requires cyber incident reporting."
+    mock_response.content = "DFARS 252.204-7012 requires cyber incident reporting to DoD [DFARS 252.204-7012]."
     orchestrator.synthesizer_llm.invoke.return_value = mock_response
 
     result = orchestrator._synthesize_response(state)
 
     assert result["generated_response"] == mock_response.content
-    assert "blocked due to low-evidence guardrail" not in " ".join(result["agent_path"])
+    assert result["low_confidence"] is False
+    assert "low-confidence label applied" not in " ".join(result["agent_path"])
+
+
+@patch('src.agents.orchestrator.get_synthesizer_prompt')
+@patch('src.agents.orchestrator.format_documents')
+def test_low_confidence_label_applied_when_weak_support(mock_format, mock_prompt, orchestrator):
+    """Weakly grounded and uncited answers should be labeled as low confidence."""
+    mock_format.return_value = "Formatted Docs"
+    mock_prompt.return_value = "System Prompt"
+
+    state = {
+        "query": "test query",
+        "retrieved_documents": [{"content": "Short unrelated chunk.", "score": 0.05}],
+    }
+
+    mock_response = MagicMock(spec=AIMessage)
+    mock_response.content = "You should do extra reporting within two days."
+    orchestrator.synthesizer_llm.invoke.return_value = mock_response
+
+    result = orchestrator._synthesize_response(state)
+
+    assert result["low_confidence"] is True
+    assert result["generated_response"].startswith("Low confidence notice:")
+    assert "low-confidence label applied" in " ".join(result["agent_path"])
 
 
 def test_run_sync(orchestrator):
@@ -118,6 +156,8 @@ def test_run_sync(orchestrator):
         "generated_response": "Test Response",
         "retrieved_documents": [],
         "confidence_score": 0.9,
+        "quality_metrics": {"quality_score": 0.82, "low_confidence": False},
+        "low_confidence": False,
         "agent_path": ["Path"],
         "regulation_types_used": ["FAR"],
         "errors": []
@@ -130,4 +170,6 @@ def test_run_sync(orchestrator):
     
     assert result["response"] == "Test Response"
     assert result["confidence"] == 0.9
+    assert result["quality_metrics"]["quality_score"] == 0.82
+    assert result["low_confidence"] is False
     assert result["regulation_types"] == ["FAR"]
