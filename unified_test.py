@@ -52,11 +52,21 @@ def run_benchmark():
         print(f"\nTesting: {t['name']}")
         print(f"Query: '{t['query']}'")
         
+        # Get token
+        try:
+            import subprocess
+            token = subprocess.check_output(["./venv/bin/python3", "gen_test_token.py"]).decode().strip()
+            headers = {"Authorization": f"Bearer {token}"}
+        except Exception as e:
+            print(f"⚠️  Could not generate token: {e}")
+            headers = {}
+
         start_time = time.perf_counter()
         try:
             resp = requests.post(
                 f"{API_URL}/query",
                 json={"query": t['query'], "history": [], "cot": False},
+                headers=headers,
                 timeout=30
             )
             elapsed = time.perf_counter() - start_time
