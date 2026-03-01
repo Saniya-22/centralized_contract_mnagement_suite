@@ -80,7 +80,7 @@ class VectorQueries:
         query_embedding: List[float],
         k: int = None,
         regulation_type: Optional[str] = None,
-        namespace: str = "public-regulations",
+        namespace: str = settings.REGULATIONS_NAMESPACE,
     ) -> List[Dict[str, Any]]:
         """Perform cosine-similarity vector search on embeddings_dense.
 
@@ -145,7 +145,7 @@ class VectorQueries:
         query_text: str,
         k: int = None,
         regulation_type: Optional[str] = None,
-        namespace: str = "public-regulations",
+        namespace: str = settings.REGULATIONS_NAMESPACE,
     ) -> List[Dict[str, Any]]:
         """Full-text search using PostgreSQL ts_rank_cd + search_vector column.
 
@@ -253,7 +253,7 @@ class VectorQueries:
         query_text: str,
         k: int = None,
         regulation_type: Optional[str] = None,
-        namespace: str = "public-regulations",
+        namespace: str = settings.REGULATIONS_NAMESPACE,
     ) -> List[Dict[str, Any]]:
         """Run dense + FTS searches in parallel and merge with RRF.
 
@@ -314,7 +314,7 @@ class VectorQueries:
     def direct_clause_search(
         clause_num: str,
         k: int = 10,
-        namespace: str = "public-regulations",
+        namespace: str = settings.REGULATIONS_NAMESPACE,
         source: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """ILIKE text search for an exact clause number string.
@@ -397,7 +397,7 @@ class VectorQueries:
                 f"Clause regex failed for '{clause_reference}', trying FTS fallback"
             )
             fts_results = VectorQueries.fts_search(
-                clause_reference, k=5, namespace="public-regulations"
+                clause_reference, k=5, namespace=settings.REGULATIONS_NAMESPACE
             )
             if fts_results:
                 primary = fts_results[0]
@@ -432,7 +432,7 @@ class VectorQueries:
 
         # Stage 1: direct ILIKE search
         direct_results = VectorQueries.direct_clause_search(
-            clause_num, k=10, namespace="public-regulations", source=source
+            clause_num, k=10, namespace=settings.REGULATIONS_NAMESPACE, source=source
         )
         if direct_results:
             context_parts = []
@@ -474,7 +474,7 @@ class VectorQueries:
             query_text=query_text,
             k=5,
             regulation_type=reg_type,
-            namespace="public-regulations",
+            namespace=settings.REGULATIONS_NAMESPACE,
         )
 
         if not fused_results:
@@ -570,6 +570,14 @@ class VectorQueries:
     # ─── API Response Caching ────────────────────────────────────────────────
 
     @staticmethod
+    def _cache_hash(query: str, cot: bool = True, cache_scope: Optional[str] = None) -> str:
+        """Build a stable cache hash; optionally scope by user/thread context."""
+        key = f"{query.strip().lower()}|cot:{cot}"
+        if cache_scope:
+            key += f"|scope:{cache_scope.strip().lower()}"
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    @staticmethod
     def init_cache_table():
         """Ensure the api_response_cache table exists."""
         sql = """
@@ -591,11 +599,13 @@ class VectorQueries:
             logger.error(f"Failed to init cache table: {e}")
 
     @staticmethod
-    def get_cached_response(query: str, cot: bool = True) -> Optional[Dict[str, Any]]:
+    def get_cached_response(
+        query: str,
+        cot: bool = True,
+        cache_scope: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Retrieve a cached response if valid and not expired."""
-        # Simple hash of query + cot setting
-        key = f"{query.strip().lower()}|cot:{cot}"
-        query_hash = hashlib.sha256(key.encode()).hexdigest()
+        query_hash = VectorQueries._cache_hash(query, cot, cache_scope)
 
         sql = """
         SELECT response_data
@@ -617,10 +627,15 @@ class VectorQueries:
             return None
 
     @staticmethod
-    def set_cached_response(query: str, response: Dict[str, Any], cot: bool = True, ttl_hours: int = 24):
+    def set_cached_response(
+        query: str,
+        response: Dict[str, Any],
+        cot: bool = True,
+        ttl_hours: int = 24,
+        cache_scope: Optional[str] = None,
+    ):
         """Store a response in the cache with a TTL."""
-        key = f"{query.strip().lower()}|cot:{cot}"
-        query_hash = hashlib.sha256(key.encode()).hexdigest()
+        query_hash = VectorQueries._cache_hash(query, cot, cache_scope)
         expires_at = datetime.now() + timedelta(hours=ttl_hours)
 
         sql = """

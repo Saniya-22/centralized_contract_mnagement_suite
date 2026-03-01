@@ -68,7 +68,8 @@ def test_synthesize_response_success(mock_format, mock_prompt, orchestrator):
     mock_response.content = "Synthesized Answer"
     orchestrator.synthesizer_llm.invoke.return_value = mock_response
     
-    result = orchestrator._synthesize_response(state)
+    with patch('src.agents.orchestrator.settings.PILOT_SAFE_MODE', False):
+        result = orchestrator._synthesize_response(state)
     
     assert result["generated_response"] == "Synthesized Answer"
     assert result["confidence_score"] == 0.8
@@ -84,8 +85,32 @@ def test_synthesize_response_no_docs(orchestrator):
     
     result = orchestrator._synthesize_response(state)
     
-    assert "couldn't find specific information" in result["generated_response"]
+    assert "sufficient high-confidence evidence" in result["generated_response"]
     assert "Synthesizer: No documents" in result["agent_path"][-1]
+
+
+@patch('src.agents.orchestrator.get_synthesizer_prompt')
+@patch('src.agents.orchestrator.format_documents')
+def test_clause_lookup_allows_single_high_conf_doc_in_safe_mode(mock_format, mock_prompt, orchestrator):
+    """Clause lookup path should not require 3 docs when confidence is high."""
+    mock_format.return_value = "Formatted Clause Doc"
+    mock_prompt.return_value = "System Prompt"
+
+    state = {
+        "query": "What does DFARS 252.204-7012 require?",
+        "query_intent": QueryIntent.CLAUSE_LOOKUP.value,
+        "detected_clause_ref": "DFARS 252.204-7012",
+        "retrieved_documents": [{"content": "Clause text", "score": 1.0}],
+    }
+
+    mock_response = MagicMock(spec=AIMessage)
+    mock_response.content = "DFARS 252.204-7012 requires cyber incident reporting."
+    orchestrator.synthesizer_llm.invoke.return_value = mock_response
+
+    result = orchestrator._synthesize_response(state)
+
+    assert result["generated_response"] == mock_response.content
+    assert "blocked due to low-evidence guardrail" not in " ".join(result["agent_path"])
 
 
 def test_run_sync(orchestrator):

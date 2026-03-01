@@ -93,6 +93,8 @@ Guidelines:
 - Ground all statements in the retrieved documents
 - Use direct quotes when appropriate
 - Cite sources with regulation type, section, and clause
+- Do not make claims that are not directly supported by retrieved evidence
+- If evidence is weak, incomplete, or conflicting, explicitly say evidence is insufficient
 - Organize information logically (by topic, chronology, or importance)
 - Highlight key requirements, deadlines, or conditions
 - Note any relevant exceptions or special cases
@@ -103,6 +105,6 @@ User Query: {state.get('query', '')}
 Format your response with:
 - Clear section headings
 - Bullet points for multiple items
-- Inline citations [e.g., FAR 52.219-8]
+- Inline citations for every material claim [e.g., FAR 52.219-8]
 - Summary of key points if response is lengthy
 """

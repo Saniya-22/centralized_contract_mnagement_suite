@@ -108,8 +108,14 @@ def format_documents(documents: List[Dict[str, Any]], max_tokens: int = 4000) ->
     """
     formatted_parts = []
     total_tokens = 0
+    skipped = 0
     
     for idx, doc in enumerate(documents, 1):
+        raw_content = doc.get("content", "") or ""
+        trimmed_content = raw_content[: settings.MAX_DOC_CHARS_FOR_SYNTHESIS]
+        if len(raw_content) > len(trimmed_content):
+            trimmed_content += "..."
+
         # Format single document
         doc_text = f"""--- Document {idx} ---
 Source: {doc.get('source', 'Unknown')}
@@ -118,21 +124,24 @@ Section: {doc.get('section', 'N/A')}
 Score: {doc.get('score', 0):.3f}
 
 Content:
-{doc.get('content', '')}
+{trimmed_content}
 
 """
         
         # Check token limit
         doc_tokens = count_tokens(doc_text)
         if total_tokens + doc_tokens > max_tokens:
-            logger.info(f"Reached token limit at document {idx}")
+            skipped += 1
             continue
         
         formatted_parts.append(doc_text)
         total_tokens += doc_tokens
     
     result = "\n".join(formatted_parts)
-    logger.info(f"Formatted {len(formatted_parts)} documents ({total_tokens} tokens)")
+    logger.info(
+        f"Formatted {len(formatted_parts)} documents ({total_tokens} tokens), "
+        f"skipped {skipped} due to token budget"
+    )
     return result
 
 

@@ -13,6 +13,7 @@ const {
     PG_PORT = '5432',
     PG_DB = 'daedalus',
     PG_USER = 'daedalus_admin',
+    PG_PASSWORD = '',
     PG_PASS = '',
     PG_SSLMODE = 'disable'
 } = process.env;
@@ -32,7 +33,7 @@ async function initializeDatabase() {
         port: parseInt(PG_PORT),
         database: PG_DB,
         user: PG_USER,
-        password: PG_PASS,
+        password: PG_PASSWORD || PG_PASS,
         ssl: PG_SSLMODE === 'require' ? { rejectUnauthorized: false } : false
     });
 

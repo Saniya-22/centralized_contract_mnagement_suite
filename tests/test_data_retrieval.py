@@ -1,9 +1,10 @@
 """Tests for data retrieval agent"""
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, AsyncMock, patch
 from src.agents.data_retrieval import DataRetrievalAgent
 from src.state.graph_state import GovGigState
+from src.tools.query_classifier import QueryIntent
 
 
 @pytest.fixture
@@ -48,9 +49,10 @@ def test_get_system_prompt(data_retrieval_agent, sample_state):
     assert "EM385" in prompt
 
 
+@pytest.mark.asyncio
 @patch('src.agents.data_retrieval.DataRetrievalAgent._create_messages')
 @patch('src.agents.base.ChatOpenAI')
-def test_agent_run(mock_llm_class, mock_create_messages, data_retrieval_agent, sample_state):
+async def test_agent_run(mock_llm_class, mock_create_messages, data_retrieval_agent, sample_state):
     """Test agent execution"""
     # Mock LLM instance and its bind_tools method
     mock_llm_instance = mock_llm_class.return_value
@@ -68,7 +70,48 @@ def test_agent_run(mock_llm_class, mock_create_messages, data_retrieval_agent, s
     mock_bound_llm.invoke.return_value = mock_response
     
     # Run agent
-    result = agent.run(sample_state)
+    result = await agent.run(sample_state)
     
     assert 'agent_path' in result
     assert len(result['agent_path']) > 0
+
+
+@pytest.mark.asyncio
+async def test_agent_run_triggers_reflection_healing(data_retrieval_agent, sample_state):
+    """Low-confidence critique should trigger healing and append healed docs."""
+    # Route through direct regulation search path (no tool-selector dependency)
+    sample_state["query_intent"] = QueryIntent.REGULATION_SEARCH
+    sample_state["detected_reg_type"] = "FAR"
+
+    initial_docs = [
+        {
+            "content": "Initial FAR snippet",
+            "regulation_type": "FAR",
+            "score": 0.2,
+        }
+    ]
+    initial_tool_calls = [{"agent": "DataRetrievalAgent", "tool": "search_regulations"}]
+    initial_reg_types = ["FAR"]
+
+    data_retrieval_agent._do_regulation_search = Mock(
+        return_value=(initial_docs, initial_tool_calls, initial_reg_types)
+    )
+    data_retrieval_agent.reflection_manager.check_quality = Mock(
+        return_value={
+            "passed": False,
+            "score": 0.2,
+            "reason": "Low retrieval confidence.",
+        }
+    )
+    healed_docs = [
+        {"content": "Healed FAR snippet", "regulation_type": "FAR", "score": 0.8}
+    ]
+    data_retrieval_agent.reflection_manager.heal_search = AsyncMock(return_value=healed_docs)
+
+    result = await data_retrieval_agent.run(sample_state)
+
+    assert len(result["retrieved_documents"]) == 2
+    assert result["retrieved_documents"][0]["content"] == "Initial FAR snippet"
+    assert result["retrieved_documents"][1]["content"] == "Healed FAR snippet"
+    assert any("Self-healing: Added 1 supplemental documents" in step for step in result["agent_path"])
+    data_retrieval_agent.reflection_manager.heal_search.assert_awaited_once()

@@ -5,9 +5,11 @@ import plotly.graph_objects as go
 import time
 from datetime import datetime
 import json
+import os
 
 # --- CONFIGURATION ---
 API_URL = "http://localhost:8000/api/v1/query"
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_REQUEST_TIMEOUT", "90"))
 ST_TITLE = "GovGig AI - Regulatory Command Center"
 PRIMARY_COLOR = "#00D1FF"
 SECONDARY_COLOR = "#7000FF"
@@ -192,11 +194,16 @@ with col_main:
         with st.status("🔍 Analyzing documents...", expanded=True) as status:
             t0 = time.perf_counter()
             try:
-                response = httpx.post(API_URL, json={
-                    "query": prompt,
-                    "history": st.session_state.history[:-1], # pass history
-                    "cot": True
-                }, timeout=30.0)
+                response = httpx.post(
+                    API_URL,
+                    json={
+                        "query": prompt,
+                        "history": st.session_state.history[:-1], # pass history
+                        "cot": False
+                    },
+                    timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=10.0),
+                )
+                response.raise_for_status()
                 
                 res_data = response.json()
                 latency = time.perf_counter() - t0
@@ -225,6 +232,15 @@ with col_main:
                 status.update(label="✅ Analysis Completed", state="complete", expanded=False)
                 st.rerun()
 
+            except httpx.ReadTimeout:
+                status.update(label="❌ Backend Timeout", state="error")
+                st.error(
+                    f"Backend took longer than {REQUEST_TIMEOUT_SECONDS:.0f}s. "
+                    "Please retry, or increase DASHBOARD_REQUEST_TIMEOUT."
+                )
+            except httpx.HTTPStatusError as e:
+                status.update(label="❌ Backend HTTP Error", state="error")
+                st.error(f"Backend returned HTTP {e.response.status_code}: {e.response.text[:300]}")
             except Exception as e:
                 status.update(label="❌ Error in Retrieval", state="error")
                 st.error(f"Backend Error: {str(e)}")

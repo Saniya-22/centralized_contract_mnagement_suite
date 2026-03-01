@@ -14,7 +14,9 @@ const {
     PG_PORT = '5432',
     PG_DB = 'daedalus',
     PG_USER = 'daedalus_admin',
+    PG_PASSWORD = '',
     PG_PASS = '',
+    REGULATIONS_NAMESPACE = 'public-regulations',
     PG_SSLMODE = 'disable'
 } = process.env;
 
@@ -29,8 +31,8 @@ async function loadRegulationsData() {
         console.log('');
         console.log(`⚠️  Database already has ${initResult.denseCount} records.`);
         console.log('   To reload, clear the tables first:');
-        console.log('   DELETE FROM embeddings_dense WHERE namespace = \'public-regulations\';');
-        console.log('   DELETE FROM embeddings_sparse WHERE namespace = \'public-regulations\';');
+        console.log(`   DELETE FROM embeddings_dense WHERE namespace LIKE '${REGULATIONS_NAMESPACE}%';`);
+        console.log(`   DELETE FROM embeddings_sparse WHERE namespace LIKE '${REGULATIONS_NAMESPACE}%';`);
         return initResult;
     }
 
@@ -50,7 +52,7 @@ async function loadRegulationsData() {
         port: parseInt(PG_PORT),
         database: PG_DB,
         user: PG_USER,
-        password: PG_PASS,
+        password: PG_PASSWORD || PG_PASS,
         ssl: PG_SSLMODE === 'require' ? { rejectUnauthorized: false } : false
     });
 
