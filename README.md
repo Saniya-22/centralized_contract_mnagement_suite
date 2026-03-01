@@ -425,11 +425,11 @@ python -m src.api.main
 
 - Python test suite: `34 passed`
 - Reflection tests: `7/7 passed`
-- Deploy quality gate: `PASS`
-  - `pass_rate=85.71%`
+- E2E quality gate (3 runs, 21 total cases): `PASS`
+  - `pass_rate=100.00%`
   - `fallback_rate=0.00%`
   - `citation_rate=100.00%`
-  - `avg_latency=8.34s`
+  - `avg_latency=5.87s` (`p95=9.52s`, `max=9.57s`)
 
 ### Port Already in Use
 
