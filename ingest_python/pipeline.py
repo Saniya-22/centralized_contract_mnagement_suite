@@ -13,7 +13,7 @@ import warnings
 import tiktoken
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 
 import nltk
 from nltk.corpus import stopwords
@@ -121,7 +121,7 @@ stmt_upsert_sparse = stmt_insert_sparse.on_conflict_do_update(
 # Using strict form to avoid text = jsonb mismatch
 stmt_hash_check = select(dense_table.c.id).where(
     dense_table.c.metadata["file_hash"].astext == bindparam("file_hash"),
-    dense_table.c.namespace == bindparam("namespace")
+    dense_table.c.namespace.like(bindparam("namespace_prefix"))
 ).limit(1)
 
 # ---------------------------------------------------------
@@ -452,6 +452,167 @@ def count_tokens(text: str) -> int:
     """Returns the number of tokens in a text string."""
     return len(TOKENIZER.encode(text))
 
+
+_ANCHOR_RE = re.compile(
+    r"^\s*(?:FAR|DFARS)?\s*(?:52\.\d{3}-\d+|252\.\d{3}-\d+|\d{2,3}\.\d{3}(?:-\d+)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_anchor_chunk(text: str) -> bool:
+    """Clause-title like anchor chunks are allowed to stay small."""
+    first_line = (text or "").strip().splitlines()
+    if not first_line:
+        return False
+    return bool(_ANCHOR_RE.match(first_line[0]))
+
+
+def _keep_anchor_standalone(text: str) -> bool:
+    """In high-risk mode we do not keep tiny anchor-only chunks standalone."""
+    return KEEP_STANDALONE_ANCHOR_CHUNKS and _is_anchor_chunk(text)
+
+def _tail_overlap_by_tokens(parts: List[str], token_budget: int) -> List[str]:
+    """Keep the tail of `parts` whose total token count fits the overlap budget."""
+    if token_budget <= 0 or not parts:
+        return []
+    overlap: List[str] = []
+    total = 0
+    for part in reversed(parts):
+        t = count_tokens(part)
+        if total + t > token_budget:
+            break
+        overlap.insert(0, part)
+        total += t
+    return overlap
+
+def _merge_small_text_chunks(chunks: List[str], min_tokens: int, max_tokens: int) -> List[str]:
+    """Merge undersized chunks into adjacent chunks to reduce retrieval noise."""
+    if not chunks:
+        return []
+    merged: List[str] = []
+    i = 0
+    while i < len(chunks):
+        cur = chunks[i]
+        cur_tokens = count_tokens(cur)
+        if cur_tokens >= min_tokens or _keep_anchor_standalone(cur):
+            merged.append(cur)
+            i += 1
+            continue
+
+        # Prefer merging tiny tail into previous chunk.
+        if merged:
+            prev = merged[-1]
+            if count_tokens(prev) + cur_tokens <= max_tokens:
+                merged[-1] = f"{prev}\n\n{cur}"
+                i += 1
+                continue
+
+        # Otherwise merge forward with next chunk when possible.
+        if i + 1 < len(chunks):
+            nxt = chunks[i + 1]
+            if cur_tokens + count_tokens(nxt) <= max_tokens:
+                merged.append(f"{cur}\n\n{nxt}")
+                i += 2
+                continue
+
+        merged.append(cur)
+        i += 1
+    return merged
+
+def _split_on_clause_boundaries(text: str, source: str) -> List[str]:
+    """Pre-split large FAR/DFARS blocks on clause-like line starts."""
+    source = (source or "").upper()
+    if source not in {"FAR", "DFARS"}:
+        return [text]
+    if count_tokens(text) < CLAUSE_SPLIT_TRIGGER_TOKENS:
+        return [text]
+
+    lines = text.splitlines()
+    blocks: List[str] = []
+    current: List[str] = []
+
+    for line in lines:
+        if _ANCHOR_RE.match(line) and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+
+    if current:
+        blocks.append("\n".join(current).strip())
+
+    return [b for b in blocks if b]
+
+def _passes_quality_gate(text: str) -> bool:
+    """Reject chunks that are mostly noise (headers/footers/artifacts)."""
+    if not text:
+        return False
+    tokens = count_tokens(text)
+    if tokens < 8:
+        return False
+
+    stripped = text.strip()
+    alnum = sum(ch.isalnum() for ch in stripped)
+    printable = sum(ch.isprintable() and not ch.isspace() for ch in stripped) or 1
+    alnum_ratio = alnum / printable
+    if alnum_ratio < 0.35:
+        return False
+
+    words = re.findall(r"[A-Za-z0-9]{2,}", stripped.lower())
+    if not words:
+        return False
+    unique_ratio = len(set(words)) / len(words)
+    return unique_ratio >= 0.08
+
+
+def _merge_chunk_records_within_section(
+    chunk_records: List[Dict[str, Any]],
+    min_tokens: int,
+    max_tokens: int,
+) -> List[Dict[str, Any]]:
+    """Global consolidation pass to reduce tiny chunks after section chunking."""
+    if not chunk_records:
+        return []
+    merged: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(chunk_records):
+        cur = dict(chunk_records[i])
+        cur_text = cur.get("text", "")
+        cur_tokens = count_tokens(cur_text)
+        if cur_tokens >= min_tokens or _keep_anchor_standalone(cur_text):
+            merged.append(cur)
+            i += 1
+            continue
+
+        # Try merging tiny chunk into previous chunk in same section.
+        if merged:
+            prev = merged[-1]
+            same_section = (
+                prev.get("section_number") == cur.get("section_number")
+                and prev.get("section_title") == cur.get("section_title")
+            )
+            if same_section and count_tokens(prev["text"]) + cur_tokens <= max_tokens:
+                prev["text"] = f"{prev['text']}\n\n{cur_text}"
+                i += 1
+                continue
+
+        # Or merge forward with next chunk in same section.
+        if i + 1 < len(chunk_records):
+            nxt = dict(chunk_records[i + 1])
+            same_section = (
+                nxt.get("section_number") == cur.get("section_number")
+                and nxt.get("section_title") == cur.get("section_title")
+            )
+            if same_section and cur_tokens + count_tokens(nxt.get("text", "")) <= max_tokens:
+                nxt["text"] = f"{cur_text}\n\n{nxt['text']}"
+                chunk_records[i + 1] = nxt
+                i += 1
+                continue
+
+        merged.append(cur)
+        i += 1
+    return merged
+
 def create_chunks(text: str) -> List[str]:
     """Breaks a text block into smaller chunks based on token count with overlap."""
     if not text:
@@ -476,39 +637,34 @@ def create_chunks(text: str) -> List[str]:
             sentences = re.split(r'(?<=[.!?])\s+', para)
             for sent in sentences:
                 sent_tokens = count_tokens(sent)
-                if current_tokens + sent_tokens > MAX_TOKEN_CAP and current_chunk:
+                if (
+                    current_tokens + sent_tokens > TARGET_CHUNK_MAX_TOKENS
+                    and current_chunk
+                ):
                     chunks.append(" ".join(current_chunk))
-                    # Basic overlap: keep last sentence
-                    overlap_sent = current_chunk[-1] if CHUNK_OVERLAP > 0 else ""
-                    current_chunk = [overlap_sent] if overlap_sent else []
-                    current_tokens = count_tokens(overlap_sent) if overlap_sent else 0
+                    overlap_sentences = _tail_overlap_by_tokens(current_chunk, CHUNK_OVERLAP)
+                    current_chunk = overlap_sentences
+                    current_tokens = sum(count_tokens(x) for x in overlap_sentences)
                 
                 if sent_tokens > MAX_TOKEN_CAP:
                     logger.warning(f"Oversized sentence ({sent_tokens} tokens) found. Force-splitting.")
                     tokens = TOKENIZER.encode(sent)
-                    for j in range(0, len(tokens), MAX_TOKEN_CAP):
-                        chunk_tokens = tokens[j : j + MAX_TOKEN_CAP]
+                    for j in range(0, len(tokens), TARGET_CHUNK_MAX_TOKENS):
+                        chunk_tokens = tokens[j : j + TARGET_CHUNK_MAX_TOKENS]
                         chunks.append(TOKENIZER.decode(chunk_tokens))
                 else:
                     current_chunk.append(sent)
                     current_tokens += sent_tokens
             continue
 
-        if current_tokens + para_tokens > MAX_TOKEN_CAP:
-            chunks.append("\n\n".join(current_chunk))
-            
-            # Implementation of CHUNK_OVERLAP: 
-            # Carry over paragraphs until overlap limit is reached
-            overlap_chunk = []
-            overlap_tokens = 0
-            for prev_para in reversed(current_chunk):
-                p_tokens = count_tokens(prev_para)
-                if overlap_tokens + p_tokens <= CHUNK_OVERLAP:
-                    overlap_chunk.insert(0, prev_para)
-                    overlap_tokens += p_tokens
-                else:
-                    break
-            
+        split_threshold = min(MAX_TOKEN_CAP, TARGET_CHUNK_MAX_TOKENS)
+        if current_tokens + para_tokens > split_threshold:
+            if current_chunk:
+                chunks.append("\n\n".join(current_chunk))
+
+            # Carry over tail paragraphs until overlap token budget is reached.
+            overlap_chunk = _tail_overlap_by_tokens(current_chunk, CHUNK_OVERLAP)
+            overlap_tokens = sum(count_tokens(x) for x in overlap_chunk)
             current_chunk = overlap_chunk + [para]
             current_tokens = overlap_tokens + para_tokens
         else:
@@ -518,20 +674,28 @@ def create_chunks(text: str) -> List[str]:
     if current_chunk:
         chunks.append("\n\n".join(current_chunk))
 
-    return chunks
+    merged = _merge_small_text_chunks(chunks, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
+    return merged
 
-def create_section_aware_chunks(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def create_section_aware_chunks(sections: List[Dict[str, Any]], source: str) -> List[Dict[str, Any]]:
     """Processes sections into chunks while maintaining metadata hierarchy."""
     all_chunks: List[Dict[str, Any]] = []
     for section in sections:
         text = section["full_text"].strip()
         if not text:
             continue
-        if count_tokens(text) <= MAX_TOKEN_CAP:
-            all_chunks.append({**section, "text": text})
-        else:
-            split_chunks = create_chunks(text)
-            for chunk_text in split_chunks:
+
+        split_blocks = _split_on_clause_boundaries(text, source)
+
+        for block in split_blocks:
+            block_tokens = count_tokens(block)
+            if block_tokens <= MAX_TOKEN_CAP:
+                block_chunks = [block]
+            else:
+                block_chunks = create_chunks(block)
+            block_chunks = _merge_small_text_chunks(block_chunks, TARGET_CHUNK_MIN_TOKENS, MAX_TOKEN_CAP)
+
+            for chunk_text in block_chunks:
                 all_chunks.append({
                     "text": chunk_text,
                     "section_number": section["section_number"],
@@ -539,7 +703,11 @@ def create_section_aware_chunks(sections: List[Dict[str, Any]]) -> List[Dict[str
                     "hierarchy_struct": section["hierarchy_struct"],
                     "hierarchy_path": section["hierarchy_path"],
                 })
-    return all_chunks
+    return _merge_chunk_records_within_section(
+        all_chunks,
+        min_tokens=TARGET_CHUNK_MIN_TOKENS,
+        max_tokens=MAX_TOKEN_CAP,
+    )
 
 # ---------------------------------------------------------
 # Embedding and Persistence Logic
@@ -618,12 +786,19 @@ async def store_chunks(chunks: List[Dict[str, Any]], embeddings: List[Optional[L
             )
 
         text = chunk["text"]
+        if not _passes_quality_gate(text):
+            continue
+        token_count = count_tokens(text)
+        if token_count < MIN_CHUNK_TOKENS and not _keep_anchor_standalone(text):
+            continue
+
         refs = extract_clause_references(text)
 
         metadata: Dict[str, Any] = {
             **base_metadata,
             "document_id": base_metadata["filename"],
             "chunk_index": i,
+            "chunk_tokens": token_count,
             "embedding_model": EMBEDDING_MODEL,
             "clause_references": refs,
             "relevant_text": text[:500],
@@ -660,6 +835,12 @@ async def store_chunks(chunks: List[Dict[str, Any]], embeddings: List[Optional[L
     if not dense_params:
         return
 
+    if len(dense_params) != len(sparse_params):
+        raise ValueError(
+            f"Dense/sparse payload mismatch for {base_metadata['filename']}: "
+            f"{len(dense_params)} vs {len(sparse_params)}"
+        )
+
     try:
         # Execute batch natively with SQLAlchemy
         await conn.execute(stmt_upsert_dense, dense_params)
@@ -683,7 +864,10 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
         # Use engine.begin() for automatic transaction management
         async with engine.begin() as conn:
             # Check for existing hash using SQLAlchemy selection
-            res = await conn.execute(stmt_hash_check, {"file_hash": fhash, "namespace": NAMESPACE})
+            res = await conn.execute(
+                stmt_hash_check,
+                {"file_hash": fhash, "namespace_prefix": f"{NAMESPACE}%"}
+            )
             if res.first():
                 logger.info(f"  {filename}: File already processed. Skipping.")
                 return {"filename": filename, "skipped": True}
@@ -697,8 +881,12 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
             content = extract_page_content(page, i + 1)
             full_text += content["text"] + "\n\n"
 
-        sections = extract_structured_sections(full_text, metadata.get("source", "UNKNOWN"))
-        chunks = create_section_aware_chunks(sections)
+        source = metadata.get("source", "UNKNOWN")
+        sections = extract_structured_sections(full_text, source)
+        chunks = create_section_aware_chunks(sections, source)
+        if not chunks:
+            logger.warning(f"  {filename}: Structured section parsing returned no chunks. Using raw fallback chunking.")
+            chunks = [{"text": t} for t in create_chunks(full_text)]
         logger.info(f"  {filename}: Extracted {len(chunks)} chunks.")
 
         # Generate embeddings with token-limit guardrail
@@ -722,6 +910,21 @@ async def main() -> None:
         return
 
     pdf_files: List[str] = [str(p) for p in SPECIFICATIONS_DIR.rglob("*.pdf")]
+
+    include_files = {
+        name.strip().lower()
+        for name in INCLUDE_FILES_RAW.split(",")
+        if name.strip()
+    }
+    if include_files:
+        pdf_files = [
+            p for p in pdf_files
+            if Path(p).stem.lower() in include_files
+        ]
+        logger.info(
+            f"INCLUDE_FILES active. Processing {len(pdf_files)} file(s): "
+            f"{', '.join(sorted(include_files))}"
+        )
 
     logger.info(f"Found {len(pdf_files)} PDF files to process.")
 

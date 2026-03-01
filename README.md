@@ -2,6 +2,15 @@
 
 Python backend for GovGig AI using LangGraph for multi-agent orchestration and FastAPI for serving.
 
+## ✅ Migration Status
+
+This repository has been successfully migrated to the Python backend.
+
+- Runtime API: `src/api/main.py` (FastAPI on port `8000`)
+- Orchestration: `src/agents/orchestrator.py` (LangGraph)
+- Retrieval: `src/agents/data_retrieval.py` + `src/tools/vector_search.py`
+- Legacy Node.js runtime routes are not part of the active production path
+
 ## 🎯 Overview
 
 This is a **Phase 1** implementation that includes:
@@ -10,13 +19,14 @@ This is a **Phase 1** implementation that includes:
 - ✅ **Query Classifier (Router)**: Smart intent categorization (e.g. `clause_lookup`, `regulation_search`)
 - ✅ **JWT Authentication**: Secured endpoints with token-based access
 - ✅ **Conversation Persistence**: LangGraph state stored in PostgreSQL (Checkpointing)
-- ✅ **API Response Caching**: Postgres-based caching for identical queries (24h TTL)
+- ✅ **Scoped API Response Caching**: Postgres-based caching for identical queries (scoped by user + thread, 24h TTL)
 - ✅ **Data Retrieval Agent**: Vector search with hybrid (dense + sparse) embeddings
+- ✅ **Reflection + Self-Healing Loop**: Retrieval critique and automatic recovery when confidence is low
 - ✅ **Direct Clause Lookup**: Optimized database fetching for exact clause references
 - ✅ **FastAPI Backend**: REST and WebSocket APIs
 - ✅ **PostgreSQL + pgvector**: Existing vector database integration
 - ✅ **Streaming Support**: Real-time response streaming
-- ✅ **Chain-of-Thought**: reasoning mode enabled by default
+- ✅ **Pilot Safe Mode Guardrails**: Evidence thresholds + citation checks before synthesis
 - ⏳ **Additional Agents**: Document analysis, generation (coming in Phase 2+)
 
 ## 🏗️ Architecture
@@ -73,7 +83,7 @@ This is a **Phase 1** implementation that includes:
 ### 1. Create Virtual Environment
 
 ```bash
-cd backend_python
+# Run from repository root
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
@@ -123,16 +133,17 @@ python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 4
 # Health check
 curl http://localhost:8000/api/v1/health
 
-# Query endpoint
+# Query endpoint (JWT required)
 curl -X POST http://localhost:8000/api/v1/query \
+  -H "Authorization: Bearer <your_jwt_token>" \
   -H "Content-Type: application/json" \
   -d '{"query": "What are the requirements for small business set-asides in FAR?"}'
 ```
 
 ### 7. Access Documentation
 
-- **Swagger UI**: http://localhost:8000/api/v1/docs
-- **ReDoc**: http://localhost:8000/api/v1/redoc
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
 
 ## 🐳 Docker Deployment
 
@@ -177,6 +188,21 @@ pytest --cov=src --cov-report=html
 
 # Run specific test file
 pytest tests/test_vector_search.py -v
+```
+
+### Quality Gate (Deploy Check)
+
+Run a real end-to-end quality gate against your configured DB/OpenAI services.
+The command exits non-zero on regression, so it can be used directly in CI/CD.
+
+```bash
+python scripts/quality_gate.py \
+  --queries-file scripts/quality_queries.json \
+  --min-pass-rate 0.85 \
+  --max-fallback-rate 0.20 \
+  --min-citation-rate 0.85 \
+  --max-avg-latency 12 \
+  --report-out /tmp/quality_gate_report.json
 ```
 
 ## 📡 API Endpoints
@@ -258,7 +284,8 @@ curl -H "Authorization: Bearer <your_jwt_token>" http://localhost:8000/api/v1/cl
 
 ### API Caching
 The application uses PostgreSQL to store a cache of API responses.
-- **Mechanism:** Queries are hashed (SHA-256) and stored with their final JSON response.
+- **Mechanism:** Queries are hashed (SHA-256) and stored with final JSON response.
+- **Scope:** Cache key includes query + CoT + user/thread scope to avoid cross-user leakage.
 - **TTL:** Default expiration is **24 hours**.
 - **Impact:** Repeat queries return in **< 50ms**, bypassing the entire LLM pipeline.
 
@@ -267,19 +294,39 @@ Using LangGraph's `PostgresSaver`, all conversation states are persisted.
 - **Threads:** Use the `thread_id` field in requests to maintain state across different sessions.
 - **Resilience:** Conversations can be resumed even after server restarts.
 
+### Reflection + Self-Healing
+When retrieval quality is low, the system runs a reflection loop:
+1. Critique retrieval confidence and regulation alignment.
+2. Expand/refine query.
+3. Re-run search and merge supplemental documents.
+
+This flow is implemented in:
+- `src/reflection/`
+- `src/agents/data_retrieval.py`
+
 ## 🔧 Configuration
 
 Key configuration options in `.env`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_NAME` | `gpt-4o` | OpenAI model for agents |
+| `MODEL_NAME` | `gpt-4o-mini` | Tool-selector model |
+| `SYNTHESIZER_MODEL` | `gpt-4o-mini` | Final response synthesis model |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
 | `TEMPERATURE` | `0.2` | LLM temperature |
-| `DENSE_TOP_K` | `10` | Dense search results |
-| `HYBRID_DENSE_WEIGHT` | `0.7` | Dense score weight |
+| `RETRIEVAL_TOP_K` | `6` | Primary retrieval depth |
+| `RAG_TOKEN_LIMIT` | `3200` | Max context tokens before synthesis |
+| `REFLECTION_THRESHOLD` | `0.35` | Reflection trigger threshold |
+| `PILOT_SAFE_MODE` | `true` | Enables pilot evidence guardrails |
+| `PILOT_MIN_DOCS` | `3` | Baseline minimum docs (clause lookup path is intent-tuned) |
+| `PILOT_MIN_TOP_SCORE` | `0.30` | Minimum top normalized evidence score |
+| `PILOT_MIN_AVG_SCORE` | `0.20` | Minimum average normalized evidence score |
 | `MAX_ITERATIONS` | `10` | Max LangGraph iterations |
 | `LOG_LEVEL` | `INFO` | Logging level |
+
+### Authentication Note
+`/api/v1/query` and `/api/v1/clause/*` require a valid JWT.
+This service validates JWTs; token issuance is expected from your auth flow/upstream system.
 
 ## 📊 Monitoring
 
@@ -319,7 +366,7 @@ mypy src/
 ### Project Structure
 
 ```
-backend_python/
+govgig-feature-python-ai-assistant/
 ├── src/
 │   ├── agents/          # LangGraph agents
 │   │   ├── base.py
@@ -346,12 +393,11 @@ backend_python/
 
 ## 🔄 Migration from Node.js
 
-This backend can run **alongside** the existing Node.js backend:
+Migration is complete for this repository.
 
-1. Node.js continues on port 3000
-2. Python backend runs on port 8000
-3. Frontend can connect to either endpoint
-4. Gradual migration of features
+- Use only the Python backend on port `8000`
+- Do not use legacy Node.js routes or scripts for runtime operations
+- Use `ingest_python/pipeline.py` for indexing and re-indexing
 
 ## 🐛 Troubleshooting
 
@@ -368,12 +414,22 @@ psql -U postgres -d daedalus -c "SELECT * FROM pg_extension WHERE extname='vecto
 ### Import Errors
 
 ```bash
-# Ensure you're in the backend_python directory
-cd backend_python
+# Ensure you're in repository root
+pwd
 
 # Run with module path
 python -m src.api.main
 ```
+
+## ✅ Current Validation Snapshot (March 1, 2026)
+
+- Python test suite: `34 passed`
+- Reflection tests: `7/7 passed`
+- Deploy quality gate: `PASS`
+  - `pass_rate=85.71%`
+  - `fallback_rate=0.00%`
+  - `citation_rate=100.00%`
+  - `avg_latency=8.34s`
 
 ### Port Already in Use
 

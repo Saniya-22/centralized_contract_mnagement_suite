@@ -30,6 +30,7 @@ from src.state.graph_state import GovGigState
 from src.tools.vector_search import VectorSearchTool
 from src.tools.query_classifier import QueryIntent
 from src.reflection import ReflectionManager
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,11 @@ class DataRetrievalAgent(BaseAgent):
         super().__init__(name="DataRetrievalAgent")
 
         self.vector_search_tool = VectorSearchTool()
-        self.reflection_manager = ReflectionManager(threshold=0.7)
+        self.reflection_manager = ReflectionManager(
+            threshold=settings.REFLECTION_THRESHOLD,
+            max_queries=settings.SELF_HEALING_MAX_QUERIES,
+            max_docs=settings.SELF_HEALING_MAX_DOCS,
+        )
         all_tools = self.vector_search_tool.as_langchain_tools()
 
         # Only bound when we genuinely need LLM tool selection (ambiguous queries)
@@ -144,7 +149,7 @@ class DataRetrievalAgent(BaseAgent):
                 # ── 3. Self-Healing (Occurs only on failure) ──────────────
                 reg_filter = detected_reg_type
                 async def _search_wrapper(q: str):
-                    search_args = {"query": q, "k": 5}
+                    search_args = {"query": q, "k": settings.SELF_HEALING_SEARCH_K}
                     if reg_filter:
                         search_args["regulation_type"] = reg_filter
                     return await asyncio.to_thread(
@@ -242,7 +247,11 @@ class DataRetrievalAgent(BaseAgent):
         _log, _think,
     ):
         """Direct hybrid search — no LLM tool-selector involved."""
-        tool_args = {"query": query, "k": 10, "search_mode": "hybrid"}
+        tool_args = {
+            "query": query,
+            "k": settings.RETRIEVAL_TOP_K,
+            "search_mode": "hybrid",
+        }
         if regulation_type:
             tool_args["regulation_type"] = regulation_type
 

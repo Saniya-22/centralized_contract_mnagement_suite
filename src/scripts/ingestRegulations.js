@@ -11,15 +11,15 @@ import murmurhash from 'murmurhash';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const NAMESPACE = 'public-regulations';
+const NAMESPACE = process.env.REGULATIONS_NAMESPACE || 'public-regulations';
 const CHUNK_SIZE = 2048;
 const CHUNK_OVERLAP = 200;
-const EMBEDDING_MODEL = 'text-embedding-ada-002';
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small';
 const BATCH_SIZE = 20;
 
 const {
     OPENAI_API_KEY,
-    PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASS,
+    PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD, PG_PASS,
     PG_DENSE_TABLE, PG_SPARSE_TABLE, PG_SSLMODE
 } = process.env;
 
@@ -35,7 +35,7 @@ const pool = new pg.Pool({
     port: parseInt(PG_PORT || '5432'),
     database: PG_DB,
     user: PG_USER,
-    password: PG_PASS,
+    password: PG_PASSWORD ?? PG_PASS ?? '',
     ssl,
 });
 
@@ -246,7 +246,8 @@ async function storeChunks(chunks, embeddings, baseMetadata) {
                 ...baseMetadata,
                 chunk_index: i,
                 clause_references: refs,
-                relevant_text: text.substring(0, 500)
+                relevant_text: text.substring(0, 500),
+                embedding_model: EMBEDDING_MODEL,
             };
 
             const id = `${NAMESPACE}-${baseMetadata.filename}-${i}`;
@@ -277,10 +278,10 @@ async function storeChunks(chunks, embeddings, baseMetadata) {
 }
 
 async function clearNamespace() {
-    console.log(`Clearing '${NAMESPACE}' namespace...`);
+    console.log(`Clearing namespace prefix '${NAMESPACE}%'...`);
     try {
-        await pool.query(`DELETE FROM ${denseTable} WHERE namespace = $1`, [NAMESPACE]);
-        await pool.query(`DELETE FROM ${sparseTable} WHERE namespace = $1`, [NAMESPACE]);
+        await pool.query(`DELETE FROM ${denseTable} WHERE namespace LIKE $1`, [`${NAMESPACE}%`]);
+        await pool.query(`DELETE FROM ${sparseTable} WHERE namespace LIKE $1`, [`${NAMESPACE}%`]);
     } catch (error) {
         console.warn('Warning:', error.message);
     }
@@ -342,6 +343,8 @@ async function main() {
     console.log('='.repeat(60));
     console.log('Government Regulations Ingestion');
     console.log('='.repeat(60));
+    console.log(`Namespace: ${NAMESPACE}`);
+    console.log(`Embedding model: ${EMBEDDING_MODEL}`);
 
     const specsDir = path.join(__dirname, '..', '..', 'specifications');
     if (!fs.existsSync(specsDir)) {

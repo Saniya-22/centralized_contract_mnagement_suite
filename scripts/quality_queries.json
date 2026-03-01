@@ -1,0 +1,58 @@
+[
+  {
+    "id": "far_differing_site_conditions",
+    "query": "Which FAR clause applies to differing site conditions?",
+    "expected_regulation": "FAR",
+    "must_contain_any": ["52.236-2", "differing site conditions"],
+    "require_citation": true,
+    "max_seconds": 12
+  },
+  {
+    "id": "dfars_cyber_requirements",
+    "query": "Show me DFARS cybersecurity requirements",
+    "expected_regulation": "DFARS",
+    "must_contain_any": ["252.204-7012", "cyber"],
+    "require_citation": true,
+    "max_seconds": 14
+  },
+  {
+    "id": "far_small_business_set_asides",
+    "query": "What are the requirements for small business set-asides in FAR?",
+    "expected_regulation": "FAR",
+    "must_contain_any": ["small business", "set-aside"],
+    "require_citation": true,
+    "max_seconds": 14
+  },
+  {
+    "id": "far_buy_american_steel",
+    "query": "What are the Buy American requirements for steel?",
+    "expected_regulation": "FAR",
+    "must_contain_any": ["buy american", "steel"],
+    "require_citation": true,
+    "max_seconds": 14
+  },
+  {
+    "id": "em385_excavation_safety",
+    "query": "What are the requirements for excavation safety?",
+    "expected_regulation": "EM385",
+    "must_contain_any": ["excavation", "safety"],
+    "require_citation": true,
+    "max_seconds": 16
+  },
+  {
+    "id": "dfars_252_204_7012_clause",
+    "query": "What does DFARS 252.204-7012 require?",
+    "expected_regulation": "DFARS",
+    "must_contain_any": ["252.204-7012", "cyber incident"],
+    "require_citation": true,
+    "max_seconds": 12
+  },
+  {
+    "id": "far_19_502_2_clause",
+    "query": "What does FAR 19.502-2 say about small business set-asides?",
+    "expected_regulation": "FAR",
+    "must_contain_any": ["19.502-2", "small business"],
+    "require_citation": true,
+    "max_seconds": 12
+  }
+]

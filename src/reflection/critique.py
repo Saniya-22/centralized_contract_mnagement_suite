@@ -55,8 +55,15 @@ class RetrievalCritique:
         top_doc = documents[0]
         score = float(top_doc.get("score") or top_doc.get("rerank_score") or 0.0)
 
-        # Normalise: rerank scores are 0-10, RRF scores are ~0.03
-        normalized_score = score / 10.0 if score > 1.0 else score
+        # Normalise score regimes:
+        # - rerank scores: ~0..10
+        # - RRF scores: typically tiny (~0.01..0.05)
+        if score > 1.0:
+            normalized_score = score / 10.0
+        elif score <= 0.1:
+            normalized_score = min(score * 20.0, 1.0)
+        else:
+            normalized_score = score
 
         # ── 2. Regulation-type alignment ──────────────────────────────────
         # If the query mentions a specific regulation (FAR, DFARS, EM385),

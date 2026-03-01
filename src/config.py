@@ -1,8 +1,8 @@
 """Configuration management for GovGig AI Backend"""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from typing import Optional
-import os
 
 
 class Settings(BaseSettings):
@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     
     # Database Tables
     PG_DENSE_TABLE: str = "embeddings_dense"
+    REGULATIONS_NAMESPACE: str = "public-regulations"
 
     # Vector Search
     DENSE_TOP_K: int = 10
@@ -48,7 +49,17 @@ class Settings(BaseSettings):
     RRF_K: int = 60                               # Reciprocal Rank Fusion constant
     RERANKER_MODEL: str = "gpt-4o-mini"           # Model used for LLM reranking
     RERANKER_ENABLED: bool = True                 # Set False to skip LLM rerank, use RRF only
-    RAG_TOKEN_LIMIT: int = 4000                   # Max tokens assembled into context for faster speed
+    RAG_TOKEN_LIMIT: int = 3200                   # Max tokens assembled into context for faster speed
+    RETRIEVAL_TOP_K: int = 6                      # Primary retrieval size for regulation_search path
+    REFLECTION_THRESHOLD: float = 0.35            # Heuristic confidence threshold before self-healing
+    SELF_HEALING_SEARCH_K: int = 3                # Per expanded query search depth
+    SELF_HEALING_MAX_QUERIES: int = 1             # Max expanded queries to execute
+    SELF_HEALING_MAX_DOCS: int = 4                # Max additional docs added from self-healing
+    MAX_DOC_CHARS_FOR_SYNTHESIS: int = 1200       # Per-document content trim before prompt assembly
+    PILOT_SAFE_MODE: bool = True                  # Enforce evidence/citation guardrails
+    PILOT_MIN_DOCS: int = 3                       # Minimum docs required for grounded answer
+    PILOT_MIN_TOP_SCORE: float = 0.30             # Minimum normalized top doc score
+    PILOT_MIN_AVG_SCORE: float = 0.20             # Minimum normalized average score
 
     # LLM Models (separate concerns)
     # MODEL_NAME:       used for the DataRetrieval tool-selector fallback
@@ -81,6 +92,26 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="ignore"
     )
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_bool(cls, value):
+        """Accept common environment strings for DEBUG."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            truthy = {"1", "true", "yes", "on", "debug", "dev", "development"}
+            falsy = {"0", "false", "no", "off", "release", "prod", "production"}
+            if normalized in truthy:
+                return True
+            if normalized in falsy:
+                return False
+        raise ValueError("DEBUG must be a boolean-like value")
     
     @property
     def database_url(self) -> str:

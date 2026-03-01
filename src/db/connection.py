@@ -26,8 +26,9 @@ class DatabaseConnectionPool:
         return cls._instance
     
     def __init__(self):
-        if self._pool is None:
-            self._initialize_pool()
+        # Initialize lazily on first get_connection() call so imports and tests
+        # do not require immediate DB connectivity.
+        pass
     
     def _initialize_pool(self):
         """Initialize the connection pool with retries"""

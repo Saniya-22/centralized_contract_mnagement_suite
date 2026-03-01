@@ -1,10 +1,13 @@
 # Migration Guide: Node.js to Python LangGraph Backend
 
+> Status: Migration completed. This repository now runs in Python-only mode.
+> Legacy Node.js runtime commands are retained only as historical context.
+
 ## Overview
 
 This guide walks through migrating from the existing Node.js/Vercel AI SDK backend to the new Python/LangGraph backend.
 
-## Phase 1: Setup & Parallel Running (CURRENT)
+## Phase 1: Setup (Python-Only)
 
 ### ✅ Completed
 
@@ -58,21 +61,13 @@ curl -X POST http://localhost:8000/api/v1/query \
   -d '{"query": "What are FAR small business requirements?"}'
 ```
 
-### Running Both Backends
+### Runtime Mode
 
-**Node.js Backend:**
-```bash
-cd /path/to/govgig
-yarn dev  # Runs on port 3000
-```
+Run only the Python backend:
 
-**Python Backend:**
 ```bash
-cd backend_python
 python -m uvicorn src.api.main:app --reload --port 8000
 ```
-
-Both can run simultaneously for testing and comparison.
 
 ## Phase 2: Additional Agents (NEXT)
 
@@ -133,33 +128,24 @@ class GovGigOrchestrator:
 
 ### Update Frontend to Use Python Backend
 
-#### Option A: Environment Variable Switch
+#### Option A: Python API Base URL
 
 ```typescript
 // config.ts
-const API_BASE_URL = process.env.NEXT_PUBLIC_USE_PYTHON_BACKEND 
-  ? 'http://localhost:8000/api/v1'
-  : 'http://localhost:3000/api';
+const API_BASE_URL = 'http://localhost:8000/api/v1';
 ```
 
-#### Option B: Gradual Migration
+#### Option B: Direct Python Call
 
 ```typescript
 // services/api.ts
 export const queryDocument = async (query: string) => {
-  // Try Python backend first
-  try {
-    const response = await fetch('http://localhost:8000/api/v1/query', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
-    });
-    return await response.json();
-  } catch (error) {
-    // Fallback to Node.js backend
-    console.warn('Python backend unavailable, using Node.js');
-    return await legacyQuery(query);
-  }
+  const response = await fetch('http://localhost:8000/api/v1/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query })
+  });
+  return await response.json();
 };
 ```
 

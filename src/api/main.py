@@ -7,14 +7,13 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import logging
-import json
 from datetime import datetime
 
 from src.config import settings
 from src.agents.orchestrator import GovGigOrchestrator
 from src.db.connection import test_connection, close_db_pool, CheckpointerManager
 from src.db.queries import VectorQueries
-from src.api.auth import get_current_user, get_optional_user
+from src.api.auth import get_current_user
 
 # Configure logging
 logging.basicConfig(
@@ -51,7 +50,7 @@ async def global_exception_handler(request, exc):
         content={
             "response": "An unexpected error occurred. Please try again later.",
             "documents": [],
-            "errors": [str(exc)],
+            "errors": ["Internal server error"],
             "agent_path": ["GlobalExceptionHandler: Caught unhandled error"]
         }
     )
@@ -174,10 +173,10 @@ async def root():
     tags=["Query"]
 )
 async def query_endpoint(
-    request: QueryRequest, 
-    user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+    request: QueryRequest,
+    user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Process a query and return results (Optional Authentication)"""
+    """Process a query and return results (Authenticated)."""
     if orchestrator is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -185,9 +184,13 @@ async def query_endpoint(
         )
     
     try:
-        # Provide a default user for the local dashboard (Pilot User)
-        user_info = user or {"sub": "pilot_user_local", "name": "Pilot User"}
-        user_id = user_info.get("sub") or user_info.get("id") or user_info.get("user_id")
+        user_id = user.get("sub") or user.get("id") or user.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload: missing user identifier"
+            )
+
         context = {
             "person_id": request.person_id or user_id,
             "thread_id": request.thread_id or request.person_id or user_id or "default_thread",
@@ -195,11 +198,16 @@ async def query_endpoint(
             "cot": request.cot,
             "current_date": datetime.now().strftime("%A, %B %d, %Y")
         }
+        cache_scope = f"user:{user_id}|thread:{context['thread_id']}"
         
         logger.info(f"Processing query: {request.query[:100]}...")
         
         # 1. Check Cache
-        cached_result = VectorQueries.get_cached_response(request.query, request.cot)
+        cached_result = VectorQueries.get_cached_response(
+            request.query,
+            request.cot,
+            cache_scope=cache_scope,
+        )
         if cached_result:
             return QueryResponse(**cached_result)
 
@@ -208,15 +216,22 @@ async def query_endpoint(
         result = await orchestrator.run_async(request.query, context)
         
         # 3. Store in Cache
-        VectorQueries.set_cached_response(request.query, result, request.cot)
+        VectorQueries.set_cached_response(
+            request.query,
+            result,
+            request.cot,
+            cache_scope=cache_scope,
+        )
         
         return QueryResponse(**result)
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Query processing failed: {e}", exc_info=True)
+        logger.error("Query processing failed: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Query processing failed: {str(e)}"
+            detail="Query processing failed"
         )
 
 
@@ -255,6 +270,10 @@ async def websocket_chat(websocket: WebSocket):
                     from jose import jwt
                     payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
                     user_id = payload.get("sub") or payload.get("id")
+                    if not user_id:
+                        await websocket.send_json({"type": "error", "data": {"message": "Invalid token payload"}})
+                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                        return
                     authenticated = True
                     logger.info(f"WebSocket authenticated for user: {user_id}")
                 except Exception as e:
@@ -297,7 +316,7 @@ async def websocket_chat(websocket: WebSocket):
         try:
             await websocket.send_json({
                 "type": "error",
-                "data": {"message": str(e)}
+                "data": {"message": "Internal server error"}
             })
         except:
             pass
@@ -345,7 +364,7 @@ async def clause_lookup(
         logger.error(f"Clause lookup failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Clause lookup failed: {str(e)}"
+            detail="Clause lookup failed"
         )
 
 
