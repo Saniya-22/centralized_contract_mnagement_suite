@@ -62,11 +62,16 @@ async def measure_latency(query: str):
     }
 
 async def main():
-    # 1. Simple unambiguous query (Fast path)
-    await measure_latency("What is FAR 52.212-4?")
-    
-    # 2. Query likely to trigger reflection (Vague or low data)
-    await measure_latency("Tell me about vague safety rules in EM-385 section 99")
+    if len(sys.argv) > 1:
+        # Use query from CLI argument
+        await measure_latency(sys.argv[1])
+    else:
+        # Fallback to defaults
+        # 1. Simple unambiguous query (Fast path)
+        await measure_latency("What is FAR 52.212-4?")
+        
+        # 2. Query likely to trigger reflection (Vague or low data)
+        await measure_latency("Tell me about vague safety rules in EM-385 section 99")
 
 if __name__ == "__main__":
     asyncio.run(main())

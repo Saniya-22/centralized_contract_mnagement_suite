@@ -84,6 +84,7 @@ class QueryResponse(BaseModel):
     agent_path: List[str]
     thought_process: Optional[List[str]] = None
     regulation_types: List[str]
+    ui_action: Optional[Dict[str, Any]] = None
     errors: List[str]
 
 

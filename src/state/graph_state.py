@@ -23,6 +23,7 @@ class GovGigState(MessagesState):
     retrieved_documents: Annotated[List[Dict[str, Any]], operator.add]
     analysis_result: Optional[str]
     generated_response: Optional[str]
+    ui_action: Optional[Dict[str, Any]] # e.g. {"type": "navigate", "route": "/dashboard"}
     
     # Routing and control flow
     next_agent: Optional[str]

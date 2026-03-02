@@ -185,6 +185,7 @@ with st.sidebar:
     if st.button("Reset Session Memory", type="secondary", use_container_width=True):
         st.session_state.history = []
         st.rerun()
+    
 
 # --- MAIN UI ---
 col_main, col_evidence = st.columns([0.65, 0.35])
@@ -300,3 +301,4 @@ with col_evidence:
 # --- FOOTER ---
 st.markdown("---")
 st.markdown(f"<p style='text-align: center; color: grey;'>GovGig AI Command Center © {datetime.now().year} | Pilot Testing Phase v2.4</p>", unsafe_allow_html=True)
+
