@@ -85,26 +85,19 @@ Current Date: {state.get('current_date', 'Unknown')}
 
 Your task:
 1. Review the retrieved documents ({doc_count} documents)
-2. Synthesize a comprehensive, accurate answer to the user's query
-3. Cite specific regulation sections and clauses
-4. Present information in a clear, structured format
+2. Synthesize a concise, accurate answer to the user's query
+3. MUST cite specific regulation sections [e.g., FAR 52.219-8]
+4. Present information in a short, bulleted format
 
 Guidelines:
-- Ground all statements in the retrieved documents
-- Use direct quotes when appropriate
-- Cite sources with regulation type, section, and clause
-- Do not make claims that are not directly supported by retrieved evidence
-- If evidence is weak, incomplete, or conflicting, explicitly say evidence is insufficient
-- Organize information logically (by topic, chronology, or importance)
-- Highlight key requirements, deadlines, or conditions
-- Note any relevant exceptions or special cases
-- If documents don't fully answer the query, acknowledge limitations
+- Ground all statements strictly in the retrieved documents
+- ANSWER CONCISELY. Get straight to the point.
+- If evidence is insufficient, explicitly state that.
+- Avoid lengthy summaries or redundant explanations.
 
 User Query: {state.get('query', '')}
 
-Format your response with:
-- Clear section headings
-- Bullet points for multiple items
-- Inline citations for every material claim [e.g., FAR 52.219-8]
-- Summary of key points if response is lengthy
+Format:
+- Bullet points for requirements
+- Inline citations for every claim
 """

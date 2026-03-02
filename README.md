@@ -22,6 +22,7 @@ This is a **Phase 1** implementation that includes:
 - ✅ **Scoped API Response Caching**: Postgres-based caching for identical queries (scoped by user + thread, 24h TTL)
 - ✅ **Data Retrieval Agent**: Vector search with hybrid (dense + sparse) embeddings
 - ✅ **Reflection + Self-Healing Loop**: Retrieval critique and automatic recovery when confidence is low
+- ✅ **Optional Sovereign-AI Guardrail Layer**: Post-synthesis safety verdict (`allow/warn/block`) with soft or hard enforcement modes
 - ✅ **Direct Clause Lookup**: Optimized database fetching for exact clause references
 - ✅ **FastAPI Backend**: REST and WebSocket APIs
 - ✅ **PostgreSQL + pgvector**: Existing vector database integration
@@ -109,6 +110,16 @@ PG_DB=daedalus
 PG_USER=postgres
 PG_PASSWORD=your-password
 JWT_SECRET_KEY=your-secret-key
+```
+
+Optional guardrail integration:
+```env
+SOVEREIGN_GUARD_ENABLED=true
+SOVEREIGN_GUARD_BASE_URL=http://localhost:8001
+SOVEREIGN_GUARD_DETECT_PATH=/detect
+SOVEREIGN_GUARD_TIMEOUT_SECONDS=3.0
+SOVEREIGN_GUARD_FAIL_OPEN=true
+SOVEREIGN_GUARD_BLOCK_MODE=soft
 ```
 
 ### 4. Verify Database Connection

@@ -33,7 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /root/.local /root/.local
 
 # Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+ENV PATH=/root/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Copy application code
 COPY src/ /app/src/

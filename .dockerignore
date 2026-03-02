@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.pytest_cache
+.ruff_cache
+__pycache__
+venv
+*.log
+*.pyc
+*.pyo
+*.pyd
+.ds_store
+node_modules
+package-lock.json
+yarn.lock

@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     RRF_K: int = 60                               # Reciprocal Rank Fusion constant
     RERANKER_MODEL: str = "gpt-4o-mini"           # Model used for LLM reranking
     RERANKER_ENABLED: bool = True                 # Set False to skip LLM rerank, use RRF only
-    RAG_TOKEN_LIMIT: int = 3200                   # Max tokens assembled into context for faster speed
+    RAG_TOKEN_LIMIT: int = 2400                   # Max tokens assembled into context for faster speed
     RETRIEVAL_TOP_K: int = 6                      # Primary retrieval size for regulation_search path
     REFLECTION_THRESHOLD: float = 0.35            # Heuristic confidence threshold before self-healing
     SELF_HEALING_SEARCH_K: int = 3                # Per expanded query search depth
@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     
     # Logging
     LOG_LEVEL: str = "INFO"
+
+    # Sovereign-AI guardrail integration (optional)
+    SOVEREIGN_GUARD_ENABLED: bool = False
+    SOVEREIGN_GUARD_BASE_URL: str = "http://localhost:8000"
+    SOVEREIGN_GUARD_DETECT_PATH: str = "/detect"
+    SOVEREIGN_GUARD_TIMEOUT_SECONDS: float = 3.0
+    SOVEREIGN_GUARD_FAIL_OPEN: bool = True
+    SOVEREIGN_GUARD_BLOCK_MODE: str = "soft"  # soft|hard
+    SOVEREIGN_GUARD_AUTH_TOKEN: Optional[str] = None
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -107,6 +116,17 @@ class Settings(BaseSettings):
             if normalized in falsy:
                 return False
         raise ValueError("DEBUG must be a boolean-like value")
+
+    @field_validator("SOVEREIGN_GUARD_BLOCK_MODE", mode="before")
+    @classmethod
+    def parse_sovereign_block_mode(cls, value):
+        """Normalize Sovereign block mode."""
+        if value is None:
+            return "soft"
+        normalized = str(value).strip().lower()
+        if normalized in {"soft", "hard"}:
+            return normalized
+        raise ValueError("SOVEREIGN_GUARD_BLOCK_MODE must be either 'soft' or 'hard'")
     
     @property
     def database_url(self) -> str:

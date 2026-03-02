@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 from src.agents.orchestrator import GovGigOrchestrator
 from src.tools.query_classifier import QueryIntent
+from src.config import settings
 from langchain_core.messages import AIMessage
 
 @pytest.fixture
@@ -173,3 +174,72 @@ def test_run_sync(orchestrator):
     assert result["quality_metrics"]["quality_score"] == 0.82
     assert result["low_confidence"] is False
     assert result["regulation_types"] == ["FAR"]
+
+
+@patch('src.agents.orchestrator.get_synthesizer_prompt')
+@patch('src.agents.orchestrator.format_documents')
+def test_sovereign_soft_block_adds_safety_notice(mock_format, mock_prompt, orchestrator):
+    """Soft block mode should label the response instead of replacing it."""
+    mock_format.return_value = "Formatted Docs"
+    mock_prompt.return_value = "System Prompt"
+
+    state = {
+        "query": "test query",
+        "retrieved_documents": [
+            {"content": "Evidence [FAR 52.236-2].", "score": 0.8},
+            {"content": "More evidence [FAR 52.236-2].", "score": 0.75},
+        ],
+    }
+
+    mock_response = MagicMock(spec=AIMessage)
+    mock_response.content = "Answer with citation [FAR 52.236-2]."
+    orchestrator.synthesizer_llm.invoke.return_value = mock_response
+    orchestrator.sovereign_guard.evaluate_response = MagicMock(return_value={
+        "provider": "sovereign_ai",
+        "action": "block",
+        "should_block": True,
+        "reason": "Prompt injection pattern detected.",
+    })
+
+    with patch.object(settings, "SOVEREIGN_GUARD_BLOCK_MODE", "soft"):
+        result = orchestrator._synthesize_response(state)
+
+    assert "Safety review notice:" in result["generated_response"]
+    assert "Prompt injection pattern detected." in result["generated_response"]
+    assert result["quality_metrics"]["sovereign_guard"]["action"] == "block"
+    assert result["low_confidence"] is True
+    assert "soft mode" in " ".join(result["agent_path"])
+
+
+@patch('src.agents.orchestrator.get_synthesizer_prompt')
+@patch('src.agents.orchestrator.format_documents')
+def test_sovereign_hard_block_replaces_response(mock_format, mock_prompt, orchestrator):
+    """Hard block mode should replace generated content with safe fallback."""
+    mock_format.return_value = "Formatted Docs"
+    mock_prompt.return_value = "System Prompt"
+
+    state = {
+        "query": "test query",
+        "retrieved_documents": [
+            {"content": "Evidence [FAR 52.236-2].", "score": 0.8},
+            {"content": "More evidence [FAR 52.236-2].", "score": 0.75},
+        ],
+    }
+
+    mock_response = MagicMock(spec=AIMessage)
+    mock_response.content = "Answer with citation [FAR 52.236-2]."
+    orchestrator.synthesizer_llm.invoke.return_value = mock_response
+    orchestrator.sovereign_guard.evaluate_response = MagicMock(return_value={
+        "provider": "sovereign_ai",
+        "action": "block",
+        "should_block": True,
+        "reason": "Policy violation",
+    })
+
+    with patch.object(settings, "SOVEREIGN_GUARD_BLOCK_MODE", "hard"):
+        result = orchestrator._synthesize_response(state)
+
+    assert result["generated_response"] == orchestrator._safe_blocked_message()
+    assert result["quality_metrics"]["sovereign_guard"]["action"] == "block"
+    assert result["low_confidence"] is True
+    assert "hard mode" in " ".join(result["agent_path"])

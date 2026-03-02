@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 import json
 import os
+from jose import jwt
 
 # --- CONFIGURATION ---
 API_URL = "http://localhost:8000/api/v1/query"
@@ -95,6 +96,34 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --- HELPER FUNCTIONS ---
+def generate_internal_token():
+    """Generate a valid JWT token for internal dashboard use."""
+    try:
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        to_encode = {
+            "sub": "internal-dashboard-user",
+            "exp": expire,
+            "name": "Dashboard User",
+            "role": "admin"
+        }
+        return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    except Exception:
+        # Fallback if settings/jose not available in the dashboard environment
+        return None
+
+# Import settings if possible, otherwise use dummy values for token generation
+try:
+    from src.config import settings
+    from datetime import timedelta
+except ImportError:
+    # If run in an environment where src is not in path
+    class DummySettings:
+        JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "default_secret")
+        JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+        ACCESS_TOKEN_EXPIRE_MINUTES = 60
+    settings = DummySettings()
+    from datetime import timedelta
+
 def create_gauge(value, title, unit="s", max_val=15):
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
@@ -194,6 +223,9 @@ with col_main:
         with st.status("🔍 Analyzing documents...", expanded=True) as status:
             t0 = time.perf_counter()
             try:
+                token = generate_internal_token()
+                headers = {"Authorization": f"Bearer {token}"} if token else {}
+                
                 response = httpx.post(
                     API_URL,
                     json={
@@ -201,6 +233,7 @@ with col_main:
                         "history": st.session_state.history[:-1], # pass history
                         "cot": False
                     },
+                    headers=headers,
                     timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=10.0),
                 )
                 response.raise_for_status()
@@ -246,7 +279,7 @@ with col_main:
                 st.error(f"Backend Error: {str(e)}")
 
 with col_evidence:
-    st.markdown("### 🗃️ Evidence Evidence Viewer")
+    st.markdown("### 🗃️ Evidence Viewer")
     st.write("Click on a citation in the chat to view the original text snippet here.")
     
     # Display top documents from last AI response

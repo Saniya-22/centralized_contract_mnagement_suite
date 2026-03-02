@@ -13,6 +13,7 @@ from src.agents.data_retrieval import DataRetrievalAgent
 from src.agents.prompts import get_synthesizer_prompt
 from src.tools.llm_tools import format_documents
 from src.tools.query_classifier import classify_query, QueryIntent
+from src.services.sovereign_guard import SovereignGuard
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class GovGigOrchestrator:
         "Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. "
         "Please verify the cited clauses before final use.\n\n"
     )
+    _SAFETY_REVIEW_LABEL = "Safety review notice: {reason}\n\n"
     
     def __init__(self, checkpointer=None):
         logger.info("Initializing GovGigOrchestrator")
@@ -46,11 +48,12 @@ class GovGigOrchestrator:
             api_key=settings.OPENAI_API_KEY,
             temperature=settings.TEMPERATURE,
             streaming=True,
-            max_tokens=800,
+            max_tokens=400,
         )
 
         # Initialize agents
         self.data_retrieval = DataRetrievalAgent()
+        self.sovereign_guard = SovereignGuard()
 
         # Build and compile graph
         self.graph = self._build_graph()
@@ -176,12 +179,26 @@ class GovGigOrchestrator:
             return response_text
         return f"{self._LOW_CONFIDENCE_LABEL}{response_text}"
 
+    def _with_safety_review_label(self, response_text: str, reason: str) -> str:
+        reason_text = (reason or "Automated guardrails flagged policy risk.").strip()
+        label = self._SAFETY_REVIEW_LABEL.format(reason=reason_text)
+        if response_text.startswith(label):
+            return response_text
+        return f"{label}{response_text}"
+
     @staticmethod
     def _safe_fallback_message() -> str:
         return (
             "I don’t have sufficient high-confidence evidence in the retrieved regulatory text "
             "to provide a reliable answer. Please refine the query with regulation type/section "
             "(e.g., FAR/DFARS/EM385 clause), and I’ll return a fully cited response."
+        )
+
+    @staticmethod
+    def _safe_blocked_message() -> str:
+        return (
+            "I can’t provide that response because automated safety guardrails flagged it. "
+            "Please rephrase with a narrower, regulation-focused request."
         )
     
     def _build_graph(self) -> StateGraph:
@@ -330,10 +347,51 @@ class GovGigOrchestrator:
             ]
             response = self.synthesizer_llm.invoke(messages)
             quality_metrics = self._assess_answer_quality(response.content, documents, evidence, state)
-            final_response = self._with_low_confidence_label(
-                response.content,
-                bool(quality_metrics["low_confidence"]),
+            final_response = response.content
+            hard_block_applied = False
+
+            guard_verdict = self.sovereign_guard.evaluate_response(
+                response_text=final_response,
+                query=state.get("query", ""),
+                documents=documents,
             )
+            if guard_verdict:
+                quality_metrics["sovereign_guard"] = guard_verdict
+                guard_action = str(guard_verdict.get("action") or "allow").lower()
+                guard_should_block = bool(guard_verdict.get("should_block"))
+                guard_reason = guard_verdict.get("reason") or "Automated guardrails flagged policy risk."
+
+                if guard_action in {"warn", "block"} or guard_should_block:
+                    quality_metrics["low_confidence"] = True
+
+                if guard_should_block:
+                    block_mode = str(settings.SOVEREIGN_GUARD_BLOCK_MODE or "soft").lower()
+                    if block_mode == "hard":
+                        final_response = self._safe_blocked_message()
+                        hard_block_applied = True
+                        new_agent_path.append(
+                            "Synthesizer: Sovereign guard BLOCK applied (hard mode)"
+                        )
+                    else:
+                        final_response = self._with_safety_review_label(
+                            final_response, str(guard_reason)
+                        )
+                        new_agent_path.append(
+                            "Synthesizer: Sovereign guard BLOCK applied (soft mode)"
+                        )
+                elif guard_action == "warn":
+                    final_response = self._with_safety_review_label(
+                        final_response, str(guard_reason)
+                    )
+                    new_agent_path.append("Synthesizer: Sovereign guard WARN applied")
+                else:
+                    new_agent_path.append("Synthesizer: Sovereign guard ALLOW")
+
+            if not hard_block_applied:
+                final_response = self._with_low_confidence_label(
+                    final_response,
+                    bool(quality_metrics["low_confidence"]),
+                )
 
             elapsed = _time.perf_counter() - _t0_node
             logger.info(f"[Telemetry] Node 'synthesizer' completed in {elapsed:.2f}s")
