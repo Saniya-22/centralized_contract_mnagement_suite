@@ -135,41 +135,49 @@ class DataRetrievalAgent(BaseAgent):
             critique = self.reflection_manager.check_quality(state["query"], new_docs)
             
             if not critique["passed"]:
-                _log(f"Reflection: Low confidence ({critique['score']:.2f}). Reason: {critique['reason']}. Triggering self-healing.")
-                _think(f"Retrieval quality critique failed: {critique['reason']}. Seeking broader context.")
-                
-                # If mismatch detected, clear original bad results IMMEDIATELY
-                # to prevent them leaking into the final response/evidence.
-                is_mismatch = "mismatch" in critique.get("reason", "").lower()
-                if is_mismatch:
-                    _log("Regulation mismatch detected. Clearing original documents.")
-                    new_docs = []
-                    new_reg_types = []
+                should_heal = self._should_trigger_self_healing(critique, len(new_docs))
+                if should_heal:
+                    _log(f"Reflection: Low confidence ({critique['score']:.2f}). Reason: {critique['reason']}. Triggering self-healing.")
+                    _think(f"Retrieval quality critique failed: {critique['reason']}. Seeking broader context.")
+                    
+                    # If mismatch detected, clear original bad results IMMEDIATELY
+                    # to prevent them leaking into the final response/evidence.
+                    is_mismatch = "mismatch" in critique.get("reason", "").lower()
+                    if is_mismatch:
+                        _log("Regulation mismatch detected. Clearing original documents.")
+                        new_docs = []
+                        new_reg_types = []
 
-                # ── 3. Self-Healing (Occurs only on failure) ──────────────
-                reg_filter = detected_reg_type
-                async def _search_wrapper(q: str):
-                    search_args = {"query": q, "k": settings.SELF_HEALING_SEARCH_K}
-                    if reg_filter:
-                        search_args["regulation_type"] = reg_filter
-                    return await asyncio.to_thread(
-                        self.vector_search_tool.search_regulations.invoke,
-                        search_args
+                    # ── 3. Self-Healing (Occurs only on failure) ──────────────
+                    reg_filter = detected_reg_type
+
+                    async def _search_wrapper(q: str):
+                        search_args = {"query": q, "k": settings.SELF_HEALING_SEARCH_K}
+                        if reg_filter:
+                            search_args["regulation_type"] = reg_filter
+                        return await asyncio.to_thread(
+                            self.vector_search_tool.search_regulations.invoke,
+                            search_args
+                        )
+                    
+                    healed_docs = await self.reflection_manager.heal_search(
+                        query=state["query"],
+                        fail_reason=critique["reason"],
+                        search_func=_search_wrapper
                     )
-                
-                healed_docs = await self.reflection_manager.heal_search(
-                    query=state["query"],
-                    fail_reason=critique["reason"],
-                    search_func=_search_wrapper
-                )
-                
-                if healed_docs:
-                    _log(f"Self-healing: Added {len(healed_docs)} supplemental documents")
-                    new_docs.extend(healed_docs)
-                    for d in healed_docs:
-                        rt = d.get("regulation_type")
-                        if rt and rt not in new_reg_types:
-                            new_reg_types.append(rt)
+                    
+                    if healed_docs:
+                        _log(f"Self-healing: Added {len(healed_docs)} supplemental documents")
+                        new_docs.extend(healed_docs)
+                        for d in healed_docs:
+                            rt = d.get("regulation_type")
+                            if rt and rt not in new_reg_types:
+                                new_reg_types.append(rt)
+                else:
+                    _log(
+                        "Reflection: Borderline confidence without critical failure; "
+                        "skipping self-healing to preserve latency."
+                    )
             else:
                 _log(f"Reflection: High confidence ({critique['score']:.2f}). Fast-path synthesis.")
 
@@ -195,6 +203,26 @@ class DataRetrievalAgent(BaseAgent):
         return delta
 
     # ── Private dispatch helpers (Sync for tool compatibility) ────────────────
+
+    def _should_trigger_self_healing(self, critique: Dict[str, Any], doc_count: int) -> bool:
+        """Apply a latency-aware policy for ReflectionRAG retries.
+
+        Always heal for hard failures (no docs / regulation mismatch).
+        For soft low-confidence cases, heal only when score is materially below
+        threshold or when too few documents are available.
+        """
+        reason = str(critique.get("reason", "")).lower()
+        score = float(critique.get("score") or 0.0)
+
+        if doc_count <= 0:
+            return True
+        if "no document" in reason or "mismatch" in reason:
+            return True
+        if doc_count < 3:
+            return True
+
+        heal_cutoff = max(0.0, settings.REFLECTION_THRESHOLD - settings.REFLECTION_HEALING_MARGIN)
+        return score < heal_cutoff
 
     def _do_clause_lookup(
         self,

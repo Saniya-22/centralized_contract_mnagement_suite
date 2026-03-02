@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     RAG_TOKEN_LIMIT: int = 2400                   # Max tokens assembled into context for faster speed
     RETRIEVAL_TOP_K: int = 6                      # Primary retrieval size for regulation_search path
     REFLECTION_THRESHOLD: float = 0.35            # Heuristic confidence threshold before self-healing
+    REFLECTION_HEALING_MARGIN: float = 0.05       # Skip retries for near-threshold borderline scores
     SELF_HEALING_SEARCH_K: int = 3                # Per expanded query search depth
     SELF_HEALING_MAX_QUERIES: int = 1             # Max expanded queries to execute
     SELF_HEALING_MAX_DOCS: int = 4                # Max additional docs added from self-healing

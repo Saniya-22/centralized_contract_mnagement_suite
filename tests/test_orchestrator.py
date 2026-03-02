@@ -30,6 +30,7 @@ def test_route_query(orchestrator):
     with patch('src.agents.orchestrator.classify_query') as mock_classify:
         mock_classify.return_value = Mock(
             intent=QueryIntent.CLAUSE_LOOKUP,
+            confidence=0.95,
             clause_reference="FAR 52.236-2",
             regulation_type="FAR"
         )

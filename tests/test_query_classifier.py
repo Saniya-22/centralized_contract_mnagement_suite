@@ -120,6 +120,13 @@ def test_classify_regulation_search_solicitation():
     assert result.intent == QueryIntent.REGULATION_SEARCH
     assert result.confidence == 0.6
 
+def test_classify_regulation_search_buy_american_with_far_hint():
+    result = classify_query("What are the Buy American requirements for steel?")
+    assert result.intent == QueryIntent.REGULATION_SEARCH
+    assert result.confidence == 0.6
+    assert result.regulation_type == "FAR"
+    assert "buy american" in result.matched_keywords
+
 
 # ── No false positives from substring matching ────────────────────────────────
 

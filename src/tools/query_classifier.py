@@ -114,10 +114,10 @@ _REGULATION_KEYWORDS: tuple[str, ...] = (
     "debarment", "default", "delivery",
     # Domain-specific procurement terms
     "earnest", "evaluation", "federal",
-    "grant", "guaranty", "indemnif",
+    "grant", "guaranty", "indemnification",
     "invoice", "invoicing",
     "labor", "labour", "liquidated damages",
-    "modification", "negotiat",
+    "modification", "negotiation",
     "offeror", "option",
     "penalty", "performance bond",
     "procurement", "proposal",
@@ -136,7 +136,7 @@ _REGULATION_KEYWORDS: tuple[str, ...] = (
     "scaffold", "silica", "trench",
     # Small business / diversity
     "8a", "dbe", "disadvantaged", "hubzone",
-    "sba", "sdvosb", "small business",
+    "sba", "sdvosb", "small business", "set-aside", "set-asides",
     "veteran-owned", "vosb", "wosb",
     # Government structure
     "appropriation", "authorization",
@@ -146,12 +146,30 @@ _REGULATION_KEYWORDS: tuple[str, ...] = (
     "part", "prime contractor",
     "program", "project",
     "standard", "subpart", "title",
+    # FAR-specific topic anchors
+    "buy american", "domestic preference", "country of origin", "trade agreements act",
 )
 
-# Build word-boundary regex for each keyword once at import time
+def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
+    """Compile a keyword pattern with strict boundaries and plural support."""
+    parts = keyword.strip().split()
+    token_patterns: list[str] = []
+    for token in parts:
+        if re.fullmatch(r"[A-Za-z]+", token):
+            token_patterns.append(rf"{re.escape(token)}(?:s|es)?")
+        else:
+            token_patterns.append(re.escape(token))
+    return re.compile(r"\b" + r"\s+".join(token_patterns) + r"\b", re.IGNORECASE)
+
+
 _KW_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
-    (kw, re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE))
-    for kw in _REGULATION_KEYWORDS
+    (kw, _build_keyword_pattern(kw)) for kw in _REGULATION_KEYWORDS
+)
+
+
+_DOMAIN_HINT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # FAR Part 25 topic hint when acronym is omitted.
+    (re.compile(r"\bbuy\s+american\b", re.IGNORECASE), "FAR"),
 )
 
 
@@ -187,6 +205,14 @@ def _normalize_query(query: str) -> str:
     # NFC normalization handles smart quotes, ligatures, etc.
     text = unicodedata.normalize("NFC", query)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _infer_regulation_hint(query: str) -> Optional[str]:
+    """Infer likely regulation type from known domain-topic anchors."""
+    for pattern, regulation in _DOMAIN_HINT_PATTERNS:
+        if pattern.search(query):
+            return regulation
+    return None
 
 
 # ── Result dataclass ───────────────────────────────────────────────────────────
@@ -270,9 +296,11 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
     # ── 3. Regulatory keyword present (word-boundary safe) ───────────────────
     matched = [kw for kw, pat in _KW_PATTERNS if pat.search(normalised)]
     if matched:
+        hinted_regulation = _infer_regulation_hint(normalised)
         return ClassificationResult(
             intent           = QueryIntent.REGULATION_SEARCH,
             confidence       = 0.6,
+            regulation_type  = hinted_regulation,
             matched_keywords = matched,
         )
 

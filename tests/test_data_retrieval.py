@@ -115,3 +115,36 @@ async def test_agent_run_triggers_reflection_healing(data_retrieval_agent, sampl
     assert result["retrieved_documents"][1]["content"] == "Healed FAR snippet"
     assert any("Self-healing: Added 1 supplemental documents" in step for step in result["agent_path"])
     data_retrieval_agent.reflection_manager.heal_search.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_run_skips_healing_for_borderline_confidence(data_retrieval_agent, sample_state):
+    """Borderline confidence should skip expensive healing retries."""
+    sample_state["query_intent"] = QueryIntent.REGULATION_SEARCH
+    sample_state["detected_reg_type"] = "FAR"
+
+    initial_docs = [
+        {"content": "Small business set-aside guidance", "regulation_type": "FAR", "score": 0.32},
+        {"content": "Additional FAR small business policy", "regulation_type": "FAR", "score": 0.30},
+        {"content": "Set-aside thresholds and exceptions", "regulation_type": "FAR", "score": 0.29},
+    ]
+    initial_tool_calls = [{"agent": "DataRetrievalAgent", "tool": "search_regulations"}]
+    initial_reg_types = ["FAR"]
+
+    data_retrieval_agent._do_regulation_search = Mock(
+        return_value=(initial_docs, initial_tool_calls, initial_reg_types)
+    )
+    data_retrieval_agent.reflection_manager.check_quality = Mock(
+        return_value={
+            "passed": False,
+            "score": 0.33,  # below threshold, but within healing margin
+            "reason": "Low retrieval confidence.",
+        }
+    )
+    data_retrieval_agent.reflection_manager.heal_search = AsyncMock(return_value=[])
+
+    result = await data_retrieval_agent.run(sample_state)
+
+    assert len(result["retrieved_documents"]) == 3
+    data_retrieval_agent.reflection_manager.heal_search.assert_not_awaited()
+    assert any("skipping self-healing to preserve latency" in step.lower() for step in result["agent_path"])
