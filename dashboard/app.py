@@ -111,12 +111,18 @@ def generate_internal_token():
         # Fallback if settings/jose not available in the dashboard environment
         return None
 
+# --- CONFIG PATH FIX ---
+import sys
+project_root = os.getcwd()
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 # Import settings if possible, otherwise use dummy values for token generation
 try:
     from src.config import settings
     from datetime import timedelta
 except ImportError:
-    # If run in an environment where src is not in path
+    # Fallback if src is still not in path
     class DummySettings:
         JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "default_secret")
         JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -227,11 +233,19 @@ with col_main:
                 token = generate_internal_token()
                 headers = {"Authorization": f"Bearer {token}"} if token else {}
                 
+                # Sanitize history: only send role + text to the backend
+                # (sending full AI responses with documents/metadata causes
+                # the backend to misinterpret AI text as new queries)
+                clean_history = [
+                    {"role": h["role"], "text": h.get("text", "")}
+                    for h in st.session_state.history[:-1]
+                ]
+
                 response = httpx.post(
                     API_URL,
                     json={
                         "query": prompt,
-                        "history": st.session_state.history[:-1], # pass history
+                        "history": clean_history,
                         "cot": False
                     },
                     headers=headers,
@@ -286,15 +300,16 @@ with col_evidence:
     # Display top documents from last AI response
     if st.session_state.history and st.session_state.history[-1]['role'] == 'ai':
         last_ai = st.session_state.history[-1]
-        if 'documents' in last_ai:
-            for i, doc in enumerate(last_ai['documents'][:3]):
+        docs = last_ai.get('documents') or []
+        if docs:
+            for i, doc in enumerate(docs[:3]):
                 with st.container(border=True):
                     st.markdown(f"**Rank {doc.get('rank', i+1)}: {doc.get('regulation_type', 'UNK')} {doc.get('section', '')}**")
                     st.caption(f"File: {doc.get('source', 'N/A')}")
                     st.info(doc.get('content', ''))
                     st.progress(float(doc.get('score', 0)) if doc.get('score') else 0.0, text=f"Relevance: {float(doc.get('score', 0))*100:.1f}%")
         else:
-            st.warning("No linked documents found for the last query.")
+            st.info("No evidence retrieved for this query.")
     else:
         st.info("Retrieve information to see evidence breakdown here.")
 
