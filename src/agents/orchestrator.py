@@ -245,34 +245,35 @@ class GovGigOrchestrator:
         intent         = classification.intent
 
         # Map intent to graph routing decision
-        if intent == QueryIntent.OUT_OF_SCOPE:
-            next_agent = "end"
-        else:
-            next_agent = "data_retrieval"
+        next_agent = "end" if intent == QueryIntent.OUT_OF_SCOPE else "data_retrieval"
 
         elapsed = _time.perf_counter() - _t0_node
         logger.info(f"[Telemetry] Node 'router' completed in {elapsed:.2f}s")
 
         logger.info(
-            f"[Router] intent={intent.value}, next={next_agent}, "
-            f"clause_ref={classification.clause_reference}"
+            f"[Router] intent={intent.value}, confidence={classification.confidence:.2f}, "
+            f"next={next_agent}, clause_ref={classification.clause_reference}"
         )
 
         delta: Dict[str, Any] = {
-            "next_agent":           next_agent,
-            "reasoning":            f"QueryClassifier: intent={intent.value}",
-            "query_intent":         intent.value,
-            "detected_clause_ref":  classification.clause_reference,
-            "detected_reg_type":    classification.regulation_type,
-            "agent_path":           [
-                f"Router: intent={intent.value} "
+            "next_agent":          next_agent,
+            "reasoning":           f"QueryClassifier: intent={intent.value} confidence={classification.confidence:.2f}",
+            "query_intent":        intent.value,
+            "detected_clause_ref": classification.clause_reference,
+            "detected_reg_type":   classification.regulation_type,
+            "agent_path": [
+                f"Router: intent={intent.value} conf={classification.confidence:.2f} "
                 + (f"ref='{classification.clause_reference}' " if classification.clause_reference else "")
                 + f"→ {next_agent}"
             ],
         }
+
         if intent == QueryIntent.OUT_OF_SCOPE:
-            delta["generated_response"] = "I can only answer questions related to FAR, DFARS, or EM385 regulations. Please provide a relevant query."
-            
+            delta["generated_response"] = (
+                "I can only answer questions related to government acquisition regulations "
+                "(FAR, DFARS, EM385, OSHA, etc.). Please provide a relevant query."
+            )
+
         return delta
     
     def _determine_next_agent(
@@ -463,6 +464,7 @@ class GovGigOrchestrator:
             "agent_path": [],
             "quality_metrics": None,
             "low_confidence": None,
+            "ui_action": None,
             "regulation_types_used": [],
             "errors": []
         }
@@ -482,6 +484,7 @@ class GovGigOrchestrator:
             "agent_path":      result.get("agent_path", []),
             "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
             "regulation_types": result.get("regulation_types_used", []),
+            "ui_action":       result.get("ui_action"),
             "errors":          result.get("errors", []),
         }
 
@@ -521,6 +524,7 @@ class GovGigOrchestrator:
             "agent_path": [],
             "quality_metrics": None,
             "low_confidence": None,
+            "ui_action": None,
             "regulation_types_used": [],
             "errors": []
         }
@@ -550,6 +554,7 @@ class GovGigOrchestrator:
                             "agent_path": final_state.get('agent_path', []),
                             "thought_process": final_state.get('thought_process', []) if final_state.get('cot_enabled') else None,
                             "regulation_types": final_state.get('regulation_types_used', []),
+                            "ui_action": final_state.get('ui_action'),
                             "errors": final_state.get('errors', [])
                         }
                     }
@@ -609,6 +614,7 @@ class GovGigOrchestrator:
             "agent_path": [],
             "quality_metrics": None,
             "low_confidence": None,
+            "ui_action": None,
             "regulation_types_used": [],
             "errors": []
         }
@@ -629,5 +635,6 @@ class GovGigOrchestrator:
             "agent_path":      result.get("agent_path", []),
             "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
             "regulation_types": result.get("regulation_types_used", []),
+            "ui_action":       result.get("ui_action"),
             "errors":          result.get("errors", []),
         }
