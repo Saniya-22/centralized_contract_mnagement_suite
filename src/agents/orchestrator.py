@@ -480,9 +480,13 @@ class GovGigOrchestrator:
         # Run graph asynchronously
         result = await self.app.ainvoke(initial_state, config=config)
 
+        # Force-clear documents for OUT_OF_SCOPE — prevents leakage from
+        # LangGraph state persistence or prior retrieval nodes.
+        is_out_of_scope = result.get("query_intent") == "OUT_OF_SCOPE"
+
         return {
             "response":        result.get("generated_response"),
-            "documents":       result.get("retrieved_documents", []),
+            "documents":       [] if is_out_of_scope else result.get("retrieved_documents", []),
             "confidence":      result.get("confidence_score"),
             "quality_metrics": result.get("quality_metrics"),
             "low_confidence":  result.get("low_confidence"),
