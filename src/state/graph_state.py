@@ -17,7 +17,7 @@ class GovGigState(MessagesState):
     query: str
     person_id: Optional[str]
     current_date: str
-    chat_history: List[Dict[str, str]]
+    chat_history: List[Dict[str, Any]]
     
     # Agent outputs
     retrieved_documents: Annotated[List[Dict[str, Any]], operator.add]

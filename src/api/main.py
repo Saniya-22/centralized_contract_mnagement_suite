@@ -69,7 +69,7 @@ class QueryRequest(BaseModel):
     """Request model for query endpoint"""
     query: str = Field(..., min_length=1, description="User query")
     person_id: Optional[str] = Field(None, description="User ID for personalization")
-    history: List[Dict[str, str]] = Field(default_factory=list, description="Chat history")
+    history: List[Dict[str, Any]] = Field(default_factory=list, description="Chat history")
     thread_id: Optional[str] = Field(None, description="Thread ID for conversation persistence")
     cot: bool = Field(default=True, description="Enable Chain-of-Thought reasoning")
 
