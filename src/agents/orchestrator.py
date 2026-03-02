@@ -481,16 +481,24 @@ class GovGigOrchestrator:
         result = await self.app.ainvoke(initial_state, config=config)
 
         # Force-clear documents for OUT_OF_SCOPE — prevents leakage from
-        # LangGraph state persistence or prior retrieval nodes.
-        is_out_of_scope = result.get("query_intent") == "OUT_OF_SCOPE"
+        # LangGraph state persistence where retrieved_documents accumulates
+        # across sessions via operator.add.  We check two signals:
+        #   1. The LAST entry in agent_path (always from current run)
+        #   2. The generated response starting with the refusal prefix
+        agent_path = result.get("agent_path", [])
+        response_text = result.get("generated_response") or ""
+        is_out_of_scope = (
+            any("out_of_scope" in entry.lower() for entry in agent_path[-3:])
+            or response_text.startswith("This question doesn't appear to be about")
+        )
 
         return {
-            "response":        result.get("generated_response"),
+            "response":        response_text,
             "documents":       [] if is_out_of_scope else result.get("retrieved_documents", []),
             "confidence":      result.get("confidence_score"),
             "quality_metrics": result.get("quality_metrics"),
             "low_confidence":  result.get("low_confidence"),
-            "agent_path":      result.get("agent_path", []),
+            "agent_path":      agent_path,
             "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
             "regulation_types": result.get("regulation_types_used", []),
             "ui_action":       result.get("ui_action"),
