@@ -4,9 +4,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, stat
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 import logging
+import time
+from collections import defaultdict
 from datetime import datetime
 
 from src.config import settings
@@ -64,10 +66,37 @@ except Exception as e:
     orchestrator = None
 
 
+# ── In-memory rate limiter (no external deps) ─────────────────────────────────
+
+class InMemoryRateLimiter:
+    """Simple sliding-window rate limiter keyed by user ID."""
+
+    def __init__(self, max_requests: int = 10, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._hits: Dict[str, list] = defaultdict(list)
+
+    def check(self, user_id: str) -> bool:
+        """Return True if the request is allowed, False if rate-limited."""
+        now = time.time()
+        window_start = now - self.window_seconds
+        # Prune old entries
+        self._hits[user_id] = [t for t in self._hits[user_id] if t > window_start]
+        if len(self._hits[user_id]) >= self.max_requests:
+            return False
+        self._hits[user_id].append(now)
+        return True
+
+
+rate_limiter = InMemoryRateLimiter(max_requests=10, window_seconds=60)
+
+_MAX_QUERY_LENGTH = 2000  # DoS guard
+
+
 # Pydantic models
 class QueryRequest(BaseModel):
     """Request model for query endpoint"""
-    query: str = Field(..., min_length=1, description="User query")
+    query: str = Field(..., min_length=1, max_length=_MAX_QUERY_LENGTH, description="User query")
     person_id: Optional[str] = Field(None, description="User ID for personalization")
     history: List[Dict[str, Any]] = Field(default_factory=list, description="Chat history")
     thread_id: Optional[str] = Field(None, description="Thread ID for conversation persistence")
@@ -194,6 +223,13 @@ async def query_endpoint(
                 detail="Invalid token payload: missing user identifier"
             )
 
+        # ── Rate limit check ──────────────────────────────────────────────
+        if not rate_limiter.check(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Please wait a moment before trying again.",
+            )
+
         context = {
             "person_id": request.person_id or user_id,
             "thread_id": request.thread_id or request.person_id or user_id or "default_thread",
@@ -215,16 +251,18 @@ async def query_endpoint(
             return QueryResponse(**cached_result)
 
         # 2. If no cache, run orchestrator
-        # Run orchestrator asynchronously
         result = await orchestrator.run_async(request.query, context)
         
-        # 3. Store in Cache
-        VectorQueries.set_cached_response(
-            request.query,
-            result,
-            request.cot,
-            cache_scope=cache_scope,
-        )
+        # 3. Store in Cache — but skip caching OUT_OF_SCOPE / empty results
+        #    to avoid polluting cache with refusal messages.
+        has_documents = bool(result.get("documents"))
+        if has_documents:
+            VectorQueries.set_cached_response(
+                request.query,
+                result,
+                request.cot,
+                cache_scope=cache_scope,
+            )
         
         return QueryResponse(**result)
         

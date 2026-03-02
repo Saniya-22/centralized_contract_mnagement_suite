@@ -631,7 +631,7 @@ class VectorQueries:
         query: str,
         response: Dict[str, Any],
         cot: bool = True,
-        ttl_hours: int = 24,
+        ttl_hours: int = 4,
         cache_scope: Optional[str] = None,
     ):
         """Store a response in the cache with a TTL."""

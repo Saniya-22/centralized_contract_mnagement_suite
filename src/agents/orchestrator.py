@@ -270,8 +270,13 @@ class GovGigOrchestrator:
 
         if intent == QueryIntent.OUT_OF_SCOPE:
             delta["generated_response"] = (
-                "I can only answer questions related to government acquisition regulations "
-                "(FAR, DFARS, EM385, OSHA, etc.). Please provide a relevant query."
+                "This question doesn't appear to be about government acquisition regulations. "
+                "I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.\n\n"
+                "**Try asking something like:**\n"
+                "- \"What does FAR 52.212-4 cover?\"\n"
+                "- \"What are the OSHA fall protection requirements?\"\n"
+                "- \"How do small business set-asides work?\"\n"
+                "- \"Explain DFARS 252.204-7012 cybersecurity requirements.\""
             )
 
         return delta
