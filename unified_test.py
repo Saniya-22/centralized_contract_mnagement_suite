@@ -1,4 +1,5 @@
 import time
+import uuid
 import requests
 import json
 import logging
@@ -65,7 +66,7 @@ def run_benchmark():
         try:
             resp = requests.post(
                 f"{API_URL}/query",
-                json={"query": t['query'], "history": [], "cot": False},
+                json={"query": t['query'], "history": [], "cot": False, "thread_id": str(uuid.uuid4())},
                 headers=headers,
                 timeout=30
             )

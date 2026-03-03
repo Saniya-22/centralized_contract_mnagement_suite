@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 import logging
 import time
+import uuid
 from collections import defaultdict
 from datetime import datetime
 
@@ -232,7 +233,7 @@ async def query_endpoint(
 
         context = {
             "person_id": request.person_id or user_id,
-            "thread_id": request.thread_id or request.person_id or user_id or "default_thread",
+            "thread_id": request.thread_id or str(uuid.uuid4()),
             "history": request.history,
             "cot": request.cot,
             "current_date": datetime.now().strftime("%A, %B %d, %Y")

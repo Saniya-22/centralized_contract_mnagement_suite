@@ -477,16 +477,40 @@ class GovGigOrchestrator:
         # Configuration for persistence
         config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
 
+        # ── Snapshot pre-existing accumulated list lengths ──────────────
+        # When a thread_id is reused the checkpointer loads the previous
+        # run's state.  operator.add appends new items, so after ainvoke
+        # the result lists contain *old + new* entries.  We record the
+        # old lengths here so we can slice them out of the response below.
+        prev_state: Dict[str, Any] = {}
+        if self.checkpointer is not None:
+            try:
+                snapshot = await self.app.aget_state(config)
+                prev_state = snapshot.values if snapshot and snapshot.values else {}
+            except Exception:
+                prev_state = {}
+
+        _acc_lists = {
+            "agent_path": len(prev_state.get("agent_path", [])),
+            "errors": len(prev_state.get("errors", [])),
+            "thought_process": len(prev_state.get("thought_process", [])),
+            "retrieved_documents": len(prev_state.get("retrieved_documents", [])),
+            "regulation_types_used": len(prev_state.get("regulation_types_used", [])),
+        }
+
         # Run graph asynchronously
         result = await self.app.ainvoke(initial_state, config=config)
 
-        # Force-clear documents for OUT_OF_SCOPE — prevents leakage from
-        # LangGraph state persistence where retrieved_documents accumulates
-        # across sessions via operator.add.  We check two signals:
-        #   1. The LAST entry in agent_path (always from current run)
-        #   2. The generated response starting with the refusal prefix
-        agent_path = result.get("agent_path", [])
+        # ── Slice accumulated lists to current-run only ────────────────
+        agent_path    = result.get("agent_path", [])[_acc_lists["agent_path"]:]
+        errors        = result.get("errors", [])[_acc_lists["errors"]:]
+        thought_proc  = result.get("thought_process", [])[_acc_lists["thought_process"]:]
+        documents     = result.get("retrieved_documents", [])[_acc_lists["retrieved_documents"]:]
+        reg_types     = result.get("regulation_types_used", [])[_acc_lists["regulation_types_used"]:]
+
         response_text = result.get("generated_response") or ""
+
+        # Force-clear documents for OUT_OF_SCOPE
         is_out_of_scope = (
             any("out_of_scope" in entry.lower() for entry in agent_path[-3:])
             or response_text.startswith("This question doesn't appear to be about")
@@ -494,15 +518,15 @@ class GovGigOrchestrator:
 
         return {
             "response":        response_text,
-            "documents":       [] if is_out_of_scope else result.get("retrieved_documents", []),
+            "documents":       [] if is_out_of_scope else documents,
             "confidence":      result.get("confidence_score"),
             "quality_metrics": result.get("quality_metrics"),
             "low_confidence":  result.get("low_confidence"),
             "agent_path":      agent_path,
-            "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
-            "regulation_types": result.get("regulation_types_used", []),
+            "thought_process": thought_proc if result.get("cot_enabled") else None,
+            "regulation_types": reg_types,
             "ui_action":       result.get("ui_action"),
-            "errors":          result.get("errors", []),
+            "errors":          errors,
         }
 
     async def run(
