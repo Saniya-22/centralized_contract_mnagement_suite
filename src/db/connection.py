@@ -4,8 +4,10 @@ import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
 from contextlib import asynccontextmanager, contextmanager
-from typing import Generator, Optional, AsyncGenerator, Any
+from typing import Generator, Optional, AsyncGenerator
 import logging
+from psycopg_pool import AsyncConnectionPool
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from src.config import settings
 
@@ -116,20 +118,13 @@ def get_db_connection() -> Generator:
 class CheckpointerManager:
     """Manages the lifecycle of the LangGraph Postgres checkpointer."""
     
-    _pool: Optional[Any] = None
-    _checkpointer: Optional[Any] = None
+    _pool: Optional[AsyncConnectionPool] = None
+    _checkpointer: Optional[AsyncPostgresSaver] = None
 
     @classmethod
-    async def get_checkpointer(cls) -> Any:
+    async def get_checkpointer(cls) -> AsyncPostgresSaver:
         """Initialize and return the checkpointer."""
         if cls._checkpointer is None:
-            try:
-                from psycopg_pool import AsyncConnectionPool
-                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-            except ImportError as e:
-                raise ImportError(
-                    "LangGraph Postgres checkpointer requires: pip install langgraph-checkpoint-postgres"
-                ) from e
             logger.info("Initializing LangGraph Postgres checkpointer")
             cls._pool = AsyncConnectionPool(
                 conninfo=settings.database_url,

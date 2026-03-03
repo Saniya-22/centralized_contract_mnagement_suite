@@ -3,9 +3,7 @@ import requests
 import json
 import logging
 import statistics
-import subprocess
 from datetime import datetime
-from pathlib import Path
 
 # Configuration
 API_URL = "http://localhost:8000/api/v1"
@@ -56,10 +54,8 @@ def run_benchmark():
         
         # Get token
         try:
-            root = Path(__file__).resolve().parent
-            venv_python = root / "venv" / "bin" / "python"
-            python_cmd = str(venv_python) if venv_python.exists() else "python"
-            token = subprocess.check_output([python_cmd, "gen_test_token.py"], cwd=root).decode().strip()
+            import subprocess
+            token = subprocess.check_output(["./venv/bin/python3", "gen_test_token.py"]).decode().strip()
             headers = {"Authorization": f"Bearer {token}"}
         except Exception as e:
             print(f"⚠️  Could not generate token: {e}")
