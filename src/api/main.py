@@ -141,10 +141,11 @@ async def startup_event():
     """Run on application startup"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     
-    # Initialize cache table and database connection
+    # Initialize cache table, analytics table, and database connection
     db_ok = test_connection()
     if db_ok:
         VectorQueries.init_cache_table()
+        VectorQueries.init_analytics_table()
     
     if not db_ok:
         logger.warning("Database connection test failed at startup")
@@ -231,6 +232,8 @@ async def query_endpoint(
                 detail="Rate limit exceeded. Please wait a moment before trying again.",
             )
 
+        start_time = time.time()
+
         context = {
             "person_id": request.person_id or user_id,
             "thread_id": request.thread_id or str(uuid.uuid4()),
@@ -249,6 +252,16 @@ async def query_endpoint(
             cache_scope=cache_scope,
         )
         if cached_result:
+            # Log cache hit to analytics
+            latency_ms = int((time.time() - start_time) * 1000)
+            try:
+                _log_analytics_from_result(
+                    cached_result, request.query, user_id,
+                    context["thread_id"], latency_ms,
+                    was_cached=True, source="rest",
+                )
+            except Exception:
+                pass
             return QueryResponse(**cached_result)
 
         # 2. If no cache, run orchestrator
@@ -264,6 +277,17 @@ async def query_endpoint(
                 request.cot,
                 cache_scope=cache_scope,
             )
+
+        # 4. Log to analytics
+        latency_ms = int((time.time() - start_time) * 1000)
+        try:
+            _log_analytics_from_result(
+                result, request.query, user_id,
+                context["thread_id"], latency_ms,
+                was_cached=False, source="rest",
+            )
+        except Exception:
+            pass
         
         return QueryResponse(**result)
         
@@ -340,16 +364,32 @@ async def websocket_chat(websocket: WebSocket):
             }
             
             logger.info(f"WebSocket query: {query[:100]}...")
+            ws_start_time = time.time()
             
-            # Stream responses
+            # Stream responses — capture the last complete event for analytics
+            last_complete = None
             async for event in orchestrator.run(query, context):
                 await websocket.send_json(event)
+                if isinstance(event, dict) and event.get("type") == "complete":
+                    last_complete = event.get("data", {})
             
             # Send done message
             await websocket.send_json({
                 "type": "done",
                 "data": "[DONE]"
             })
+
+            # Log WebSocket query to analytics
+            ws_latency = int((time.time() - ws_start_time) * 1000)
+            try:
+                if last_complete and isinstance(last_complete, dict):
+                    _log_analytics_from_result(
+                        last_complete, query, user_id,
+                        context.get("thread_id"), ws_latency,
+                        was_cached=False, source="websocket",
+                    )
+            except Exception:
+                pass
             
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
@@ -368,6 +408,62 @@ async def websocket_chat(websocket: WebSocket):
         except:
             pass
 
+
+# ── Analytics helper ──────────────────────────────────────────────────────
+
+def _extract_intent_from_result(result: Dict[str, Any]) -> Optional[str]:
+    """Extract the intent from agent_path entries."""
+    for step in result.get("agent_path", []):
+        if "intent=" in step:
+            # e.g. "Router: intent=regulation_search conf=0.80"
+            try:
+                return step.split("intent=")[1].split()[0]
+            except (IndexError, AttributeError):
+                pass
+    return None
+
+
+def _log_analytics_from_result(
+    result: Dict[str, Any],
+    query: str,
+    user_id: str,
+    thread_id: str,
+    latency_ms: int,
+    was_cached: bool = False,
+    source: str = "rest",
+):
+    """Extract analytics fields from an orchestrator result and log them."""
+    VectorQueries.log_query_analytics({
+        "query_text": query,
+        "user_id": user_id,
+        "thread_id": thread_id,
+        "intent": _extract_intent_from_result(result),
+        "regulation_types": result.get("regulation_types", []),
+        "confidence": result.get("confidence"),
+        "quality_metrics": result.get("quality_metrics"),
+        "low_confidence": result.get("low_confidence"),
+        "doc_count": len(result.get("documents", [])),
+        "agent_path": result.get("agent_path", []),
+        "errors": result.get("errors", []),
+        "was_cached": was_cached,
+        "latency_ms": latency_ms,
+        "source": source,
+    })
+
+
+# ── Analytics summary endpoint ────────────────────────────────────────────
+
+@app.get(
+    f"{settings.API_PREFIX}/analytics/summary",
+    tags=["Analytics"],
+)
+async def analytics_summary(
+    hours: int = 24,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Returns aggregate query analytics for the last N hours (JWT required)."""
+    summary = await run_in_threadpool(VectorQueries.get_analytics_summary, hours)
+    return summary
 
 
 

@@ -658,3 +658,144 @@ class VectorQueries:
                     logger.debug(f"Cached response for query: {query[:50]}...")
         except Exception as e:
             logger.error(f"Failed to cache response: {e}")
+
+    # ─── Query Analytics ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def init_analytics_table():
+        """Ensure the query_analytics table exists."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS query_analytics (
+            id                  SERIAL PRIMARY KEY,
+            query_text          TEXT NOT NULL,
+            query_hash          TEXT NOT NULL,
+            user_id             TEXT,
+            thread_id           TEXT,
+            intent              TEXT,
+            regulation_types    TEXT[],
+            confidence          FLOAT,
+            quality_score       FLOAT,
+            citation_coverage   FLOAT,
+            groundedness_score  FLOAT,
+            evidence_score      FLOAT,
+            low_confidence      BOOLEAN,
+            doc_count           INT,
+            reflection_triggered BOOLEAN DEFAULT FALSE,
+            was_cached          BOOLEAN DEFAULT FALSE,
+            latency_ms          INT,
+            error_count         INT DEFAULT 0,
+            errors              TEXT[],
+            source              TEXT DEFAULT 'rest',
+            created_at          TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_analytics_created ON query_analytics (created_at);
+        CREATE INDEX IF NOT EXISTS idx_analytics_intent ON query_analytics (intent);
+        CREATE INDEX IF NOT EXISTS idx_analytics_quality ON query_analytics (quality_score);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    logger.info("Query analytics table verified")
+        except Exception as e:
+            logger.error(f"Failed to init analytics table: {e}")
+
+    @staticmethod
+    def log_query_analytics(data: Dict[str, Any]):
+        """Insert a single analytics row. Fire-and-forget — never raises."""
+        query_text = data.get("query_text", "")
+        query_hash = hashlib.sha256(query_text.strip().lower().encode()).hexdigest()
+
+        sql = """
+        INSERT INTO query_analytics (
+            query_text, query_hash, user_id, thread_id,
+            intent, regulation_types, confidence,
+            quality_score, citation_coverage, groundedness_score, evidence_score,
+            low_confidence, doc_count, reflection_triggered,
+            was_cached, latency_ms, error_count, errors, source
+        ) VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s, %s
+        );
+        """
+        try:
+            qm = data.get("quality_metrics") or {}
+            # Detect if reflection was triggered from agent_path
+            agent_path = data.get("agent_path", [])
+            reflection_triggered = any(
+                "expand" in step.lower() or "re-search" in step.lower() or "healing" in step.lower()
+                for step in agent_path
+            ) if agent_path else False
+
+            errors_list = data.get("errors", [])
+
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (
+                        query_text,
+                        query_hash,
+                        data.get("user_id"),
+                        data.get("thread_id"),
+                        data.get("intent"),
+                        data.get("regulation_types", []),
+                        data.get("confidence"),
+                        qm.get("quality_score"),
+                        qm.get("citation_coverage"),
+                        qm.get("groundedness_score"),
+                        qm.get("evidence_score"),
+                        data.get("low_confidence"),
+                        data.get("doc_count", 0),
+                        reflection_triggered,
+                        data.get("was_cached", False),
+                        data.get("latency_ms"),
+                        len(errors_list),
+                        errors_list if errors_list else None,
+                        data.get("source", "rest"),
+                    ))
+                    logger.debug(f"Analytics logged for query: {query_text[:50]}...")
+        except Exception as e:
+            logger.error(f"Failed to log analytics: {e}")
+
+    @staticmethod
+    def get_analytics_summary(hours: int = 24) -> Dict[str, Any]:
+        """Return aggregate stats for the last N hours."""
+        sql = """
+        SELECT
+            COUNT(*)                                        AS total_queries,
+            COUNT(*) FILTER (WHERE was_cached)              AS cached_queries,
+            COUNT(*) FILTER (WHERE intent = 'regulation_search') AS regulation_searches,
+            COUNT(*) FILTER (WHERE intent = 'clause_lookup')     AS clause_lookups,
+            COUNT(*) FILTER (WHERE intent = 'out_of_scope')      AS out_of_scope,
+            COUNT(*) FILTER (WHERE reflection_triggered)         AS reflection_count,
+            COUNT(*) FILTER (WHERE low_confidence)               AS low_confidence_count,
+            COUNT(*) FILTER (WHERE error_count > 0)              AS error_queries,
+            ROUND(AVG(quality_score)::numeric, 4)                AS avg_quality_score,
+            ROUND(AVG(citation_coverage)::numeric, 4)            AS avg_citation_coverage,
+            ROUND(AVG(groundedness_score)::numeric, 4)           AS avg_groundedness,
+            ROUND(AVG(latency_ms)::numeric, 0)                  AS avg_latency_ms,
+            ROUND(PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY latency_ms)::numeric, 0) AS p50_latency_ms,
+            ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::numeric, 0) AS p95_latency_ms,
+            ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms)::numeric, 0) AS p99_latency_ms
+        FROM query_analytics
+        WHERE created_at > NOW() - INTERVAL '%s hours';
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, (hours,))
+                    row = cursor.fetchone()
+                    if row:
+                        result = dict(row)
+                        # Convert Decimal types to float for JSON serialization
+                        for key, val in result.items():
+                            if val is not None and not isinstance(val, (int, float, str, bool)):
+                                result[key] = float(val)
+                        result["period_hours"] = hours
+                        return result
+                    return {"total_queries": 0, "period_hours": hours}
+        except Exception as e:
+            logger.error(f"Failed to get analytics summary: {e}")
+            return {"error": str(e), "period_hours": hours}

@@ -66,11 +66,19 @@ class GovGigOrchestrator:
     def _normalize_score(raw_score: float) -> float:
         """Normalize heterogeneous score regimes into ~0..1 confidence."""
         score = float(raw_score or 0.0)
+        
+        # Cross-encoder range (0..10ish)
         if score > 1.0:
             return min(score / 10.0, 1.0)
-        if score <= 0.1:
-            return min(score * 20.0, 1.0)
-        return min(score, 1.0)
+            
+        # RRF scores without a reranker are typically very small (< 0.05).
+        # A rank 1 match in a single index is 1/(60+1) = ~0.0164.
+        # We scale this so a Rank 1 match represents high confidence (~0.82)
+        if 0 < score <= 0.05:
+            return min(score * 50.0, 1.0)
+            
+        # Already normalized 0..1 (e.g. from clause_lookup)
+        return min(max(score, 0.0), 1.0)
 
     def _evidence_summary(self, documents: list[dict]) -> dict[str, float]:
         if not documents:
@@ -343,8 +351,7 @@ class GovGigOrchestrator:
 
             user_message = (
                 f"Retrieved Documents:\n{formatted_docs}\n\n"
-                f"User Query: {state['query']}\n\n"
-                "Answer very concisely with citations. Get straight to the point."
+                f"User Query: {state['query']}"
             )
 
             messages = [
