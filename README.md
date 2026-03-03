@@ -1,29 +1,29 @@
-# GovGig AI — Python LangGraph Backend
+# GovGig AI - Python LangGraph Backend
 
 Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powered by LangGraph multi-agent orchestration, hybrid vector search (dense + sparse), and FastAPI.
 
-## 🎯 System Capabilities
+## System Capabilities
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| **Multi-Agent Orchestration** | ✅ | LangGraph `StateGraph` with Router → DataRetrieval → Synthesizer |
-| **Deterministic Query Classifier** | ✅ | Zero-LLM routing: `clause_lookup`, `regulation_search`, `out_of_scope` |
-| **Hybrid Retrieval (Dense + Sparse)** | ✅ | OpenAI `text-embedding-3-small` + BM25/FTS fused via RRF |
-| **Reflection & Self-Healing** | ✅ | Auto critique → query expansion → re-search on low-confidence results |
-| **Optional LLM Reranker** | ✅ | GPT-4o-mini relevance scoring (toggle via `RERANKER_ENABLED`) |
-| **JWT Authentication** | ✅ | All query endpoints secured with Bearer token |
-| **In-Memory Rate Limiter** | ✅ | 10 req/min per user (sliding window) |
-| **Conversation Persistence** | ✅ | LangGraph state in PostgreSQL via `PostgresSaver` |
-| **API Response Caching** | ✅ | SHA-256 hashed, scoped by user + thread, 24h TTL |
-| **Sovereign-AI Guardrails** | ✅ | Post-synthesis safety verdict (`allow`/`warn`/`block`, soft or hard mode) |
-| **Direct Clause Lookup** | ✅ | DB-direct fetch for exact clause references (no LLM) |
-| **Quality Metrics** | ✅ | `citation_coverage`, `groundedness_score`, `evidence_score`, `quality_score` |
-| **Streamlit Dashboard** | ✅ | Glassmorphism UI with real-time performance gauges |
-| **REST + WebSocket APIs** | ✅ | Non-streaming POST + streaming WS |
+| **Multi-Agent Orchestration** | Supported | LangGraph `StateGraph` with Router -> DataRetrieval -> Synthesizer |
+| **Deterministic Query Classifier** | Supported | Zero-LLM routing: `clause_lookup`, `regulation_search`, `out_of_scope` |
+| **Hybrid Retrieval (Dense + Sparse)** | Supported | OpenAI `text-embedding-3-small` + BM25/FTS fused via RRF |
+| **Reflection & Self-Healing** | Supported | Auto critique -> query expansion -> re-search on low-confidence results |
+| **Optional LLM Reranker** | Supported | GPT-4o-mini relevance scoring (toggle via `RERANKER_ENABLED`) |
+| **JWT Authentication** | Supported | All query endpoints secured with Bearer token |
+| **In-Memory Rate Limiter** | Supported | 10 req/min per user (sliding window) |
+| **Conversation Persistence** | Supported | LangGraph state in PostgreSQL via `PostgresSaver` |
+| **API Response Caching** | Supported | SHA-256 hashed, scoped by user + thread, 24h TTL |
+| **Sovereign-AI Guardrails** | Supported | Post-synthesis safety verdict (`allow`/`warn`/`block`, soft or hard mode) |
+| **Direct Clause Lookup** | Supported | DB-direct fetch for exact clause references (no LLM) |
+| **Quality Metrics** | Supported | `citation_coverage`, `groundedness_score`, `evidence_score`, `quality_score` |
+| **Streamlit Dashboard** | Supported | Glassmorphism UI with real-time performance gauges |
+| **REST + WebSocket APIs** | Supported | Non-streaming POST + streaming WS |
 
-## 🏗️ Architecture
+## Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │              FastAPI Application                  │
 │   REST: POST /api/v1/query                       │
@@ -36,13 +36,13 @@ Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powere
 │          GovGigOrchestrator (LangGraph)           │
 │                                                   │
 │  ┌──────────────┐    ┌────────────────────────┐  │
-│  │   Router     │───▶│   DataRetrievalAgent   │  │
+│  │   Router     │───>│   DataRetrievalAgent   │  │
 │  │ (Deterministic│    │                        │  │
 │  │  Classifier) │    │  VectorSearch (hybrid)  │  │
 │  └──────────────┘    │  DirectClauseLookup     │  │
 │        │             │  ReflectionRAG          │  │
 │   out_of_scope       └───────────┬────────────┘  │
-│   → immediate                    │               │
+│   -> immediate                   │               │
 │     refusal                      ▼               │
 │                      ┌────────────────────────┐  │
 │                      │    Synthesizer Node     │  │
@@ -55,17 +55,17 @@ Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powere
                         ▼
 ┌──────────────────────────────────────────────────┐
 │            PostgreSQL + pgvector                  │
-│  • embeddings_dense (OpenAI 1536-dim)            │
-│  • FTS (tsvector + ts_rank_cd)                   │
-│  • RRF fusion (k=60)                             │
-│  • LangGraph checkpointer (conversation state)   │
-│  • Response cache (SHA-256, 24h TTL)             │
+│  * embeddings_dense (OpenAI 1536-dim)            │
+│  * FTS (tsvector + ts_rank_cd)                   │
+│  * RRF fusion (k=60)                             │
+│  * LangGraph checkpointer (conversation state)   │
+│  * Response cache (SHA-256, 24h TTL)             │
 └──────────────────────────────────────────────────┘
 ```
 
-## 📁 Project Structure
+## Project Structure
 
-```
+```text
 govgig-feature-python-ai-assistant/
 ├── src/
 │   ├── agents/
@@ -95,7 +95,7 @@ govgig-feature-python-ai-assistant/
 │   ├── config.py                # Pydantic Settings (all env vars)
 │   └── requirements.txt
 ├── ingest_python/
-│   ├── pipeline.py              # PDF ingestion: extract → chunk → embed → store
+│   ├── pipeline.py              # PDF ingestion: extract -> chunk -> embed -> store
 │   ├── config.py                # Ingestion configuration
 │   └── parsing/
 │       ├── classifier.py        # Line-level structural classification
@@ -113,15 +113,15 @@ govgig-feature-python-ai-assistant/
 └── docker-compose.yml           # Full-stack deployment
 ```
 
-## 📋 Prerequisites
+## Prerequisites
 
 - **Python** 3.11+
 - **PostgreSQL** 14+ with `pgvector` extension
-- **OpenAI API Key** — for embeddings (`text-embedding-3-small`) and synthesis (`gpt-4o-mini`)
+- **OpenAI API Key** - for embeddings (`text-embedding-3-small`) and synthesis (`gpt-4o-mini`)
 
-## 🚀 Quick Start
+## Quick Start
 
-### 1. Setup & Run (recommended)
+### 1. Setup and Run (recommended)
 
 ```bash
 # One-command setup: creates venv, installs deps, starts server
@@ -171,7 +171,7 @@ bash run_dashboard.sh
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 
-## 📡 API Endpoints
+## API Endpoints
 
 ### `GET /api/v1/health`
 
@@ -215,17 +215,21 @@ Main query endpoint for regulatory document search and synthesis.
 }
 ```
 
-- `low_confidence: true` means the answer was returned but evidence grounding is weak — flag for human review.
+- `low_confidence: true` means the answer was returned but evidence grounding is weak - flag for human review.
 - `errors: []` contains only current-run errors (stale errors from previous sessions are filtered out).
 
 ### `GET /api/v1/clause/{clause_reference}` *(JWT required)*
 
-Direct clause lookup — no LLM, database-only.
+Direct clause lookup - no LLM, database-only.
 
 ```bash
 curl -H "Authorization: Bearer <token>" \
   http://localhost:8000/api/v1/clause/FAR%2052.219-8
 ```
+
+### `GET /api/v1/analytics/summary` *(JWT required)*
+
+Returns aggregate query analytics for the last N hours.
 
 ### `WS /ws/chat`
 
@@ -237,9 +241,9 @@ Streaming chat via WebSocket. First message must contain `token` for authenticat
 
 Streams `{"type": "token", "data": "..."}` events, followed by `{"type": "complete", ...}` and `{"type": "done"}`.
 
-## ⚡ Query Processing Pipeline
+## Query Processing Pipeline
 
-```
+```text
 User Query
     │
     ▼
@@ -248,12 +252,12 @@ User Query
 │  Intents: clause_lookup | regulation_search | out_of_scope│
 └───────────────────────────────────────────────────────────┘
     │
-    ├─ out_of_scope → Immediate refusal (no DB/LLM calls)
+    ├─ out_of_scope -> Immediate refusal (no DB/LLM calls)
     │
-    ├─ clause_lookup → Direct DB fetch by clause reference
+    ├─ clause_lookup -> Direct DB fetch by clause reference
     │                   (e.g., "FAR 52.219-8")
     │
-    └─ regulation_search → Hybrid vector search:
+    └─ regulation_search -> Hybrid vector search:
                             1. Dense: cosine similarity (pgvector)
                             2. Sparse: Full-text search (tsvector)
                             3. RRF fusion (k=60)
@@ -263,20 +267,20 @@ User Query
                                 ▼
                            ┌─ ReflectionRAG ────────────────────┐
                            │  Critique confidence + reg alignment│
-                           │  If low → expand query → re-search  │
+                           │  If low -> expand query -> re-search  │
                            │  Merge supplemental documents       │
                            └────────────────────────────────────┘
                                 │
                                 ▼
                            ┌─ Synthesizer (GPT-4o-mini) ────────┐
-                           │  Format documents → LLM prompt      │
+                           │  Format documents -> LLM prompt      │
                            │  Assess quality (citation, grounding)│
                            │  Apply low_confidence label if weak  │
                            │  SovereignGuard safety check         │
                            └─────────────────────────────────────┘
 ```
 
-## 🔧 Configuration
+## Configuration
 
 All settings loaded from `.env` via Pydantic `BaseSettings`.
 
@@ -297,7 +301,7 @@ All settings loaded from `.env` via Pydantic `BaseSettings`.
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model (1536 dims) |
 | `TEMPERATURE` | `0.2` | LLM temperature |
 
-### Retrieval & RAG
+### Retrieval and RAG
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -310,7 +314,7 @@ All settings loaded from `.env` via Pydantic `BaseSettings`.
 | `RERANKER_ENABLED` | `true` | Toggle LLM reranker (saves ~1s if disabled) |
 | `RERANKER_MODEL` | `gpt-4o-mini` | Reranker model |
 
-### Reflection / Self-Healing
+### Reflection and Self-Healing
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -339,7 +343,7 @@ All settings loaded from `.env` via Pydantic `BaseSettings`.
 | `SOVEREIGN_GUARD_BLOCK_MODE` | `soft` | `soft` (label) or `hard` (replace response) |
 | `SOVEREIGN_GUARD_FAIL_OPEN` | `true` | Allow response if guard is unreachable |
 
-## 🧪 Testing
+## Testing
 
 ### Unit Tests
 
@@ -369,18 +373,18 @@ python scripts/quality_gate.py \
   --report-out /tmp/quality_gate_report.json
 ```
 
-## 📊 Validation Snapshot (March 3, 2026)
+## Validation Snapshot
 
 | Metric | Result |
 |--------|--------|
 | **Unified E2E** | 3/3 PASS |
-| **Small Business Search** | ✅ 7.81s |
-| **FAR 52.219-8(a) Lookup** | ✅ 4.22s |
-| **EM-385 Safety** | ✅ 4.74s |
+| **Small Business Search** | PASS 7.81s |
+| **FAR 52.219-8(a) Lookup** | PASS 4.22s |
+| **EM-385 Safety** | PASS 4.74s |
 | **Average Latency** | 5.59s |
 | **Stale State Errors** | 0 (fixed via unique thread_ids + state slicing) |
 
-## 📦 Data Ingestion
+## Data Ingestion
 
 The ingestion pipeline lives in `ingest_python/`:
 
@@ -390,13 +394,13 @@ pip install -r requirements.txt
 python pipeline.py
 ```
 
-**Pipeline**: PDF → Text extraction (PyMuPDF) → Section-aware chunking (clause-boundary splitting) → Embedding (OpenAI `text-embedding-3-small`) → PostgreSQL/pgvector
+**Pipeline**: PDF -> Text extraction (PyMuPDF) -> Section-aware chunking (clause-boundary splitting) -> Embedding (OpenAI `text-embedding-3-small`) -> PostgreSQL/pgvector
 
-**Corpus**: 16 PDFs (FAR, DFARS, EM 385-1-1) — 3,462 pages, ~1.27M words.
+**Corpus**: 16 PDFs (FAR, DFARS, EM 385-1-1) - 3,462 pages, ~1.27M words.
 
-**Chunking**: Target 250–550 tokens per chunk, max cap 800 tokens, 200-token overlap, clause-boundary splitting at 700 tokens.
+**Chunking**: Target 250-550 tokens per chunk, max cap 800 tokens, 200-token overlap, clause-boundary splitting at 700 tokens.
 
-## 🐳 Docker
+## Docker
 
 ```bash
 cp .env.example .env
@@ -415,7 +419,7 @@ docker run -p 8000:8000 \
   govgig-backend
 ```
 
-## 📊 Monitoring
+## Monitoring
 
 ### LangSmith (Optional)
 
@@ -431,7 +435,7 @@ LANGCHAIN_PROJECT=govgig-ai
 LOG_LEVEL=DEBUG python -m uvicorn src.api.main:app
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
@@ -441,13 +445,14 @@ LOG_LEVEL=DEBUG python -m uvicorn src.api.main:app
 | Import errors | Ensure you're running from repository root |
 | Stale errors in response | Use unique `thread_id` per session or omit it (auto-UUID) |
 
-## 📝 Pilot Testing Notes
+## Pilot Testing Notes
 
-- **Low-confidence handling**: Answers are never hard-blocked by default. `low_confidence: true` signals weak evidence grounding — treat as reviewer-required in pilot workflows.
+- **Low-confidence handling**: Answers are never hard-blocked by default. `low_confidence: true` signals weak evidence grounding - treat as reviewer-required in pilot workflows.
 - **Rate limiting**: 10 requests per minute per authenticated user. Returns HTTP 429 if exceeded.
 - **State isolation**: Each REST request gets a fresh LangGraph state by default. The orchestrator slices accumulated lists to prevent stale data from prior sessions from leaking into responses.
 - **Recommended workflow**: Track `quality_metrics` pass rates using `scripts/quality_gate.py`.
 
-## 📄 License
+## License
 
-MIT License — See root LICENSE file.
+MIT License - See root LICENSE file.
+
