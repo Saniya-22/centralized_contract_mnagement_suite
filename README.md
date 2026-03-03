@@ -81,21 +81,32 @@ This is a **Phase 1** implementation that includes:
 
 ## 🚀 Quick Start
 
-### 1. Create Virtual Environment
+### 1. Create Virtual Environment (Python 3.11+ required)
 
 ```bash
-# Run from repository root
-python -m venv venv
+# From repository root — use Python 3.11+ (e.g. python3.11 from Homebrew)
+python3.11 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-### 2. Install Dependencies
+### 2. Switch to project environment
+
+If a `venv` already exists (created with Python 3.11+), activate it:
 
 ```bash
-pip install -r requirements.txt
+source venv/bin/activate   # macOS/Linux
+# venv\Scripts\activate   # Windows
 ```
 
-### 3. Configure Environment
+Then confirm: `python --version` should show **3.11** or higher. The project uses type hints that require Python 3.10+ (3.11 recommended).
+
+### 3. Install Dependencies
+
+```bash
+pip install -r src/requirements.txt
+```
+
+### 4. Configure Environment
 
 ```bash
 cp .env.example .env
