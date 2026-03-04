@@ -32,10 +32,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import json
+import os
+import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, List, Tuple
 
 
 # ── Intent Enum ───────────────────────────────────────────────────────────────
@@ -70,10 +73,12 @@ _CLAUSE_PATTERN = re.compile(
         NMCARS              |   # Navy Marine Corps AR Supplement
         DLAD                |   # Defense Logistics Agency Directive
         OSHA                |   # Occupational Safety and Health regulations
-        EM\s*385                # Army Corps Safety Manual
+        EM[\s\-]*385            # Army Corps Safety Manual
     )
-    \s+
-    (\d+[\.\-][\d\-A-Za-z]+)   # Clause/section number
+    [\s\-,]*
+    (?:section|part|clause)?
+    [\s\-,]*
+    (\d+(?:[\.\-\(\/][\d\-A-Za-z\(\)\.\/]+)?)   # Clause/section number (fixed)
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -96,7 +101,7 @@ _SOURCE_PATTERN = re.compile(
         NMCARS      |
         DLAD        |
         OSHA        |
-        EM\s*385
+        EM[\s\-]*385
     )
     \b
     """,
@@ -196,7 +201,11 @@ _SOURCE_NORM: dict[str, str] = {
 
 def _normalise_source(raw: str) -> str:
     """Normalise matched source string to canonical label."""
-    key = re.sub(r"\s+", " ", raw.strip().upper())
+    # Special handle for EM-385 variations
+    key = raw.strip().upper()
+    if "EM" in key and "385" in key:
+        return "EM385"
+    key = re.sub(r"\s+", " ", key)
     return _SOURCE_NORM.get(key, key)
 
 
@@ -243,31 +252,98 @@ class ClassificationResult:
 
 # ── Main classifier ────────────────────────────────────────────────────────────
 
+# ── Global Cache for Centroids ───────────────────────────────────────────────
+
+_CENTROIDS: Optional[dict[str, np.ndarray]] = None
+
+def _load_centroids() -> Optional[dict[str, np.ndarray]]:
+    """Lazy-load semantic centroids from disk."""
+    global _CENTROIDS
+    if _CENTROIDS is not None:
+        return _CENTROIDS
+    
+    path = os.path.join(os.path.dirname(__file__), "intent_centroids.json")
+    if not os.path.exists(path):
+        return None
+        
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+            _CENTROIDS = {k: np.array(v) for k, v in data.items()}
+        return _CENTROIDS
+    except Exception:
+        return None
+
+def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
+    """Calculate cosine similarity between two vectors."""
+    denom = np.linalg.norm(v1) * np.linalg.norm(v2)
+    if denom == 0: return 0.0
+    return float(np.dot(v1, v2) / denom)
+
+
+# ── Waterfall Layers ─────────────────────────────────────────────────────────
+
+def _get_semantic_intent(query: str) -> Tuple[QueryIntent, float]:
+    """Layer 2: Semantic similarity check via embeddings."""
+    from src.tools.llm_tools import get_embedding
+    
+    centroids = _load_centroids()
+    if not centroids:
+        return QueryIntent.OUT_OF_SCOPE, 0.0
+        
+    try:
+        query_emb = np.array(get_embedding(query))
+        reg_sim = _cosine_similarity(query_emb, centroids["REGULATION_SEARCH"])
+        oos_sim = _cosine_similarity(query_emb, centroids["OUT_OF_SCOPE"])
+        
+        # If it's clearly regulatory or at least more regulatory than random
+        if reg_sim > oos_sim and reg_sim > 0.82:
+            return QueryIntent.REGULATION_SEARCH, reg_sim
+        return QueryIntent.OUT_OF_SCOPE, oos_sim
+    except Exception:
+        return QueryIntent.OUT_OF_SCOPE, 0.0
+
+def _extract_clause_llm(query: str) -> Optional[Tuple[str, str]]:
+    """Layer 3: Micro-LLM fallback for messy extraction."""
+    try:
+        from src.tools.llm_tools import client
+        prompt = f"""Extract the regulation source (FAR/DFARS/EM385/etc.) and the specific section/clause number from this query.
+Query: "{query}"
+
+Respond ONLY with a JSON object: {{"source": "...", "number": "..."}} or null if no regulation is mentioned."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=60,
+            temperature=0,
+        )
+        res_text = response.choices[0].message.content
+        data = json.loads(res_text or "null")
+        if data and data.get("source") and data.get("number"):
+            return str(data["source"]).upper(), str(data["number"])
+    except Exception:
+        pass
+    return None
+
+
 @lru_cache(maxsize=512)
 def classify_query(query: Optional[str]) -> ClassificationResult:
-    """Classify a user query with no LLM calls.
+    """Classify a user query with a robust multi-layered (HIC) waterfall.
 
-    Results are LRU-cached (up to 512 unique queries) so repeat calls
-    within a session are essentially free.
-
-    Precedence:
-      1. Explicit clause reference  → CLAUSE_LOOKUP      (confidence 1.0)
-      2. Regulatory source name     → REGULATION_SEARCH  (confidence 0.8)
-      3. Regulatory keyword(s)      → REGULATION_SEARCH  (confidence 0.6)
-      4. Fallback                   → OUT_OF_SCOPE       (confidence 0.0)
-
-    Args:
-        query: Raw user query string (None is safe — returns OUT_OF_SCOPE).
-
-    Returns:
-        ClassificationResult with intent, confidence, and extracted metadata.
+    Waterfall Logic:
+      1. Layer 1: Enhanced Regex (Fastest, High Confidence)
+      2. Layer 2: Micro-LLM Fallback (Robust extraction for sloppy text)
+      3. Layer 3: Semantic Intent (Catches synonyms/phrasing)
+      4. Layer 4: Deterministic Source Match (Safety net)
     """
     if not query or not query.strip():
         return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
 
     normalised = _normalize_query(query)
 
-    # ── 1. Exact clause reference ─────────────────────────────────────────────
+    # ── 1. Layer 1: Exact clause reference ─────────────────────────────────────────────
     match = _CLAUSE_PATTERN.search(normalised)
     if match:
         raw_source = match.group(1)
@@ -283,7 +359,30 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
             regulation_type  = source,
         )
 
-    # ── 2. Regulatory source name present ────────────────────────────────────
+    # ── 2. Layer 2: Micro-LLM Fallback ────────────────────────────────────────
+    # We try LLM here if regex failed, to catch sloppy clause refs before general search
+    llm_match = _extract_clause_llm(normalised)
+    if llm_match:
+        source, num = llm_match
+        norm_source = _normalise_source(source)
+        return ClassificationResult(
+            intent           = QueryIntent.CLAUSE_LOOKUP,
+            confidence       = 0.9,
+            clause_reference = f"{norm_source} {num}",
+            clause_source    = norm_source,
+            clause_number    = num,
+            regulation_type  = norm_source,
+        )
+
+    # ── 3. Layer 3: Semantic Intent ──────────────────────────────────────────
+    sem_intent, sem_conf = _get_semantic_intent(normalised)
+    if sem_intent == QueryIntent.REGULATION_SEARCH:
+        return ClassificationResult(
+            intent     = QueryIntent.REGULATION_SEARCH,
+            confidence = sem_conf,
+        )
+
+    # ── 4. Layer 4: Deterministic Source Match ────────────────────────────────────
     source_match = _SOURCE_PATTERN.search(normalised)
     if source_match:
         source = _normalise_source(source_match.group(1))
@@ -293,16 +392,5 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
             regulation_type = source,
         )
 
-    # ── 3. Regulatory keyword present (word-boundary safe) ───────────────────
-    matched = [kw for kw, pat in _KW_PATTERNS if pat.search(normalised)]
-    if matched:
-        hinted_regulation = _infer_regulation_hint(normalised)
-        return ClassificationResult(
-            intent           = QueryIntent.REGULATION_SEARCH,
-            confidence       = 0.6,
-            regulation_type  = hinted_regulation,
-            matched_keywords = matched,
-        )
-
-    # ── 4. Out of scope ───────────────────────────────────────────────────────
+    # ── 5. Out of scope ───────────────────────────────────────────────────────
     return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)

@@ -14,7 +14,8 @@ REQUEST_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_REQUEST_TIMEOUT", "90"))
 ST_TITLE = "GovGig AI - Regulatory Command Center"
 PRIMARY_COLOR = "#00D1FF"
 SECONDARY_COLOR = "#7000FF"
-BG_COLOR = "#0E1117"
+BG_COLOR = "#F0F2F6"  # Lighter background for better contrast
+ACCENT_COLOR = "#0E1117"
 
 st.set_page_config(
     page_title=ST_TITLE,
@@ -26,48 +27,56 @@ st.set_page_config(
 # --- CUSTOM CSS (Glassmorphism & Premium Look) ---
 st.markdown(f"""
     <style>
-    /* Main Background */
+    /* Main Background with a more premium gradient */
     .stApp {{
-        background: radial-gradient(circle at 50% 50%, #1a1e2e 0%, #0e1117 100%);
+        background: linear-gradient(135deg, #1A1C2C 0%, #4A192C 50%, #1A1C2C 100%);
+        background-attachment: fixed;
     }}
     
-    /* Glassmorphism Cards */
+    /* Glassmorphism Cards with better contrast */
     [data-testid="stMetric"] {{
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 15px;
-        padding: 15px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 20px;
+        padding: 20px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
     }}
     
     .stMarkdown div[data-testid="stMarkdownContainer"] blockquote {{
-        background: rgba(255, 255, 255, 0.03);
+        background: rgba(255, 255, 255, 0.05);
         border-left: 5px solid {PRIMARY_COLOR};
-        border-radius: 5px;
-        padding: 10px 20px;
+        border-radius: 8px;
+        padding: 12px 24px;
+        color: #E0E0E0;
     }}
     
-    /* Chat bubbles styling */
+    /* Chat bubbles styling - Premium Glassmorphism */
     .user-msg {{
-        background: rgba(0, 209, 255, 0.12);
-        padding: 15px;
-        border-radius: 15px 15px 0 15px;
-        border: 1px solid rgba(0, 209, 255, 0.2);
-        margin-bottom: 15px;
+        background: rgba(0, 209, 255, 0.15);
+        backdrop-filter: blur(8px);
+        padding: 18px;
+        border-radius: 20px 20px 0 20px;
+        border: 1px solid rgba(0, 209, 255, 0.3);
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        color: white;
     }}
     
     .ai-msg {{
-        background: rgba(112, 0, 255, 0.08);
-        padding: 15px;
-        border-radius: 15px 15px 15px 0;
-        border: 1px solid rgba(112, 0, 255, 0.2);
-        margin-bottom: 15px;
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(8px);
+        padding: 18px;
+        border-radius: 20px 20px 20px 0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        color: #F8F9FA;
     }}
     
     /* Performance Section */
     .perf-card {{
-        background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%);
+        background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%);
         border-radius: 20px;
         border: 1px solid rgba(255,255,255,0.1);
         padding: 20px;
@@ -76,16 +85,17 @@ st.markdown(f"""
     
     /* Document Card */
     .doc-card {{
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 10px;
-        transition: transform 0.2s;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 18px;
+        margin-bottom: 15px;
+        transition: all 0.3s ease;
     }}
     .doc-card:hover {{
         transform: translateY(-5px);
-        background: rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.1);
+        border-color: {PRIMARY_COLOR};
     }}
     
     /* Hide default Streamlit elements */
