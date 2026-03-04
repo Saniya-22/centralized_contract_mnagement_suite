@@ -213,12 +213,17 @@ class DataRetrievalAgent(BaseAgent):
         """
         reason = str(critique.get("reason", "")).lower()
         score = float(critique.get("score") or 0.0)
+        raw_score = float(critique.get("raw_score") or 0.0)
 
         if doc_count <= 0:
             return True
         if "no document" in reason or "mismatch" in reason:
             return True
         if doc_count < 3:
+            return True
+        # For tiny un-reranked RRF scores, avoid treating near-threshold failures
+        # as "safe to skip" — we want one healing pass before synthesis.
+        if 0.0 < raw_score <= 0.05 and score < settings.REFLECTION_THRESHOLD:
             return True
 
         heal_cutoff = max(0.0, settings.REFLECTION_THRESHOLD - settings.REFLECTION_HEALING_MARGIN)

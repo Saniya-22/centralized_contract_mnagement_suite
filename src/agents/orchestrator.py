@@ -317,8 +317,11 @@ class GovGigOrchestrator:
         try:
             logger.info("Synthesizing final response")
 
-            # Read accumulated documents from state (read-only — no mutation)
-            documents = state.get('retrieved_documents', [])
+            # Read only the current-turn documents when checkpoint state is reused.
+            all_documents = state.get("retrieved_documents", [])
+            offsets = state.get("run_offsets") or {}
+            start_idx = int(offsets.get("retrieved_documents", 0) or 0)
+            documents = all_documents[start_idx:] if start_idx > 0 else all_documents
             new_agent_path.append(
                 f"Synthesizer: Processing {len(documents)} retrieved documents"
             )
@@ -409,11 +412,6 @@ class GovGigOrchestrator:
             elapsed = _time.perf_counter() - _t0_node
             logger.info(f"[Telemetry] Node 'synthesizer' completed in {elapsed:.2f}s")
 
-            avg_score = (
-                sum(doc.get('score', 0) for doc in documents) / len(documents)
-                if documents else 0.0
-            )
-
             logger.info(f"Response synthesized: {len(final_response)} characters")
             new_agent_path.append(
                 f"Synthesizer: quality score={quality_metrics['quality_score']:.2f}, "
@@ -428,7 +426,7 @@ class GovGigOrchestrator:
 
             return {
                 "generated_response": final_response,
-                "confidence_score":   float(avg_score),
+                "confidence_score":   float(evidence.get("avg_norm", 0.0)),
                 "quality_metrics":    quality_metrics,
                 "low_confidence":     bool(quality_metrics["low_confidence"]),
                 "agent_path":         new_agent_path,
@@ -457,30 +455,6 @@ class GovGigOrchestrator:
         """Asynchronous non-streaming run for REST API."""
         context = context or {}
 
-        initial_state: GovGigState = {
-            "messages": [],
-            "query": query,
-            "person_id": context.get("person_id"),
-            "current_date": context.get("current_date", datetime.now().strftime("%A, %B %d, %Y")),
-            "chat_history": context.get("history", []),
-            "cot_enabled": context.get("cot", False),
-
-            # Classifier fields
-            "query_intent": None,
-            "detected_clause_ref": None,
-            "detected_reg_type": None,
-
-            "retrieved_documents": [],
-            "tool_calls": [],
-            "thought_process": [],
-            "agent_path": [],
-            "quality_metrics": None,
-            "low_confidence": None,
-            "ui_action": None,
-            "regulation_types_used": [],
-            "errors": []
-        }
-
         # Configuration for persistence
         config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
 
@@ -503,6 +477,31 @@ class GovGigOrchestrator:
             "thought_process": len(prev_state.get("thought_process", [])),
             "retrieved_documents": len(prev_state.get("retrieved_documents", [])),
             "regulation_types_used": len(prev_state.get("regulation_types_used", [])),
+        }
+
+        initial_state: GovGigState = {
+            "messages": [],
+            "query": query,
+            "person_id": context.get("person_id"),
+            "current_date": context.get("current_date", datetime.now().strftime("%A, %B %d, %Y")),
+            "chat_history": context.get("history", []),
+            "cot_enabled": context.get("cot", False),
+            "run_offsets": _acc_lists,
+
+            # Classifier fields
+            "query_intent": None,
+            "detected_clause_ref": None,
+            "detected_reg_type": None,
+
+            "retrieved_documents": [],
+            "tool_calls": [],
+            "thought_process": [],
+            "agent_path": [],
+            "quality_metrics": None,
+            "low_confidence": None,
+            "ui_action": None,
+            "regulation_types_used": [],
+            "errors": []
         }
 
         # Run graph asynchronously
@@ -551,7 +550,26 @@ class GovGigOrchestrator:
             Events during execution
         """
         context = context or {}
-        
+
+        logger.info(f"Starting orchestrator run for query: {query[:100]}...")
+
+        # Configuration for persistence
+        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
+        prev_state: Dict[str, Any] = {}
+        if self.checkpointer is not None:
+            try:
+                snapshot = await self.app.aget_state(config)
+                prev_state = snapshot.values if snapshot and snapshot.values else {}
+            except Exception:
+                prev_state = {}
+        _acc_lists = {
+            "agent_path": len(prev_state.get("agent_path", [])),
+            "errors": len(prev_state.get("errors", [])),
+            "thought_process": len(prev_state.get("thought_process", [])),
+            "retrieved_documents": len(prev_state.get("retrieved_documents", [])),
+            "regulation_types_used": len(prev_state.get("regulation_types_used", [])),
+        }
+
         # Initialize state
         initial_state: GovGigState = {
             "messages": [],
@@ -560,12 +578,13 @@ class GovGigOrchestrator:
             "current_date": context.get("current_date", datetime.now().strftime("%A, %B %d, %Y")),
             "chat_history": context.get("history", []),
             "cot_enabled": context.get("cot", False),
-            
+            "run_offsets": _acc_lists,
+
             # Classifier fields
             "query_intent": None,
             "detected_clause_ref": None,
             "detected_reg_type": None,
-            
+
             "retrieved_documents": [],
             "tool_calls": [],
             "thought_process": [],
@@ -577,11 +596,6 @@ class GovGigOrchestrator:
             "errors": []
         }
         
-        logger.info(f"Starting orchestrator run for query: {query[:100]}...")
-        
-        # Configuration for persistence
-        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
-        
         try:
             # Stream events from graph using astream_events to catch tokens
             async for event in self.app.astream_events(initial_state, config=config, version="v1"):
@@ -591,19 +605,24 @@ class GovGigOrchestrator:
                 if kind == "on_chain_end" and event["name"] == "LangGraph":
                     # This is the final state after the graph finishes
                     final_state = event["data"]["output"]
+                    final_agent_path = final_state.get("agent_path", [])[_acc_lists["agent_path"]:]
+                    final_errors = final_state.get("errors", [])[_acc_lists["errors"]:]
+                    final_thoughts = final_state.get("thought_process", [])[_acc_lists["thought_process"]:]
+                    final_docs = final_state.get("retrieved_documents", [])[_acc_lists["retrieved_documents"]:]
+                    final_reg_types = final_state.get("regulation_types_used", [])[_acc_lists["regulation_types_used"]:]
                     yield {
                         "type": "complete",
                         "data": {
                             "response": final_state.get('generated_response'),
-                            "documents": final_state.get('retrieved_documents', []),
+                            "documents": final_docs,
                             "confidence": final_state.get('confidence_score'),
                             "quality_metrics": final_state.get('quality_metrics'),
                             "low_confidence": final_state.get('low_confidence'),
-                            "agent_path": final_state.get('agent_path', []),
-                            "thought_process": final_state.get('thought_process', []) if final_state.get('cot_enabled') else None,
-                            "regulation_types": final_state.get('regulation_types_used', []),
+                            "agent_path": final_agent_path,
+                            "thought_process": final_thoughts if final_state.get('cot_enabled') else None,
+                            "regulation_types": final_reg_types,
                             "ui_action": final_state.get('ui_action'),
-                            "errors": final_state.get('errors', [])
+                            "errors": final_errors,
                         }
                     }
 
@@ -643,6 +662,23 @@ class GovGigOrchestrator:
         """Synchronous run for testing."""
         context = context or {}
 
+        # Configuration for persistence
+        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
+        prev_state: Dict[str, Any] = {}
+        if self.checkpointer is not None:
+            try:
+                snapshot = self.app.get_state(config)
+                prev_state = snapshot.values if snapshot and snapshot.values else {}
+            except Exception:
+                prev_state = {}
+        _acc_lists = {
+            "agent_path": len(prev_state.get("agent_path", [])),
+            "errors": len(prev_state.get("errors", [])),
+            "thought_process": len(prev_state.get("thought_process", [])),
+            "retrieved_documents": len(prev_state.get("retrieved_documents", [])),
+            "regulation_types_used": len(prev_state.get("regulation_types_used", [])),
+        }
+
         initial_state: GovGigState = {
             "messages": [],
             "query": query,
@@ -650,6 +686,7 @@ class GovGigOrchestrator:
             "current_date": context.get("current_date", datetime.now().strftime("%A, %B %d, %Y")),
             "chat_history": context.get("history", []),
             "cot_enabled": context.get("cot", False),
+            "run_offsets": _acc_lists,
 
             # Classifier fields
             "query_intent": None,
@@ -667,22 +704,22 @@ class GovGigOrchestrator:
             "errors": []
         }
 
-        # Configuration for persistence
-        config = {"configurable": {"thread_id": context.get("thread_id", "default_thread")}}
-
-        # Run graph synchronously — delta returns + operator.add reducers ensure
-        # each document is accumulated exactly once, so no dedup needed here.
         result = self.app.invoke(initial_state, config=config)
+        agent_path = result.get("agent_path", [])[_acc_lists["agent_path"]:]
+        errors = result.get("errors", [])[_acc_lists["errors"]:]
+        thought_proc = result.get("thought_process", [])[_acc_lists["thought_process"]:]
+        documents = result.get("retrieved_documents", [])[_acc_lists["retrieved_documents"]:]
+        reg_types = result.get("regulation_types_used", [])[_acc_lists["regulation_types_used"]:]
 
         return {
             "response":        result.get("generated_response"),
-            "documents":       result.get("retrieved_documents", []),
+            "documents":       documents,
             "confidence":      result.get("confidence_score"),
             "quality_metrics": result.get("quality_metrics"),
             "low_confidence":  result.get("low_confidence"),
-            "agent_path":      result.get("agent_path", []),
-            "thought_process": result.get("thought_process", []) if result.get("cot_enabled") else None,
-            "regulation_types": result.get("regulation_types_used", []),
+            "agent_path":      agent_path,
+            "thought_process": thought_proc if result.get("cot_enabled") else None,
+            "regulation_types": reg_types,
             "ui_action":       result.get("ui_action"),
-            "errors":          result.get("errors", []),
+            "errors":          errors,
         }

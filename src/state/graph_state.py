@@ -18,6 +18,8 @@ class GovGigState(MessagesState):
     person_id: Optional[str]
     current_date: str
     chat_history: List[Dict[str, Any]]
+    # Offsets for accumulator fields when checkpoint state is reused across turns.
+    run_offsets: Optional[Dict[str, int]]
     
     # Agent outputs
     retrieved_documents: Annotated[List[Dict[str, Any]], operator.add]

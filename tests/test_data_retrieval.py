@@ -148,3 +148,38 @@ async def test_agent_run_skips_healing_for_borderline_confidence(data_retrieval_
     assert len(result["retrieved_documents"]) == 3
     data_retrieval_agent.reflection_manager.heal_search.assert_not_awaited()
     assert any("skipping self-healing to preserve latency" in step.lower() for step in result["agent_path"])
+
+
+@pytest.mark.asyncio
+async def test_agent_run_triggers_healing_for_tiny_raw_rrf_score(data_retrieval_agent, sample_state):
+    """Tiny raw RRF score should still trigger one healing pass when critique fails."""
+    sample_state["query_intent"] = QueryIntent.REGULATION_SEARCH
+    sample_state["detected_reg_type"] = "EM385"
+
+    initial_docs = [
+        {"content": "Initial EM385 snippet", "regulation_type": "EM385", "score": 0.0164},
+        {"content": "Additional EM385 snippet", "regulation_type": "EM385", "score": 0.0150},
+        {"content": "Third EM385 snippet", "regulation_type": "EM385", "score": 0.0142},
+    ]
+    initial_tool_calls = [{"agent": "DataRetrievalAgent", "tool": "search_regulations"}]
+    initial_reg_types = ["EM385"]
+
+    data_retrieval_agent._do_regulation_search = Mock(
+        return_value=(initial_docs, initial_tool_calls, initial_reg_types)
+    )
+    data_retrieval_agent.reflection_manager.check_quality = Mock(
+        return_value={
+            "passed": False,
+            "score": 0.33,
+            "raw_score": 0.0164,
+            "reason": "Low retrieval confidence.",
+        }
+    )
+    data_retrieval_agent.reflection_manager.heal_search = AsyncMock(
+        return_value=[{"content": "Healed EM385 snippet", "regulation_type": "EM385", "score": 0.8}]
+    )
+
+    result = await data_retrieval_agent.run(sample_state)
+
+    assert len(result["retrieved_documents"]) == 4
+    data_retrieval_agent.reflection_manager.heal_search.assert_awaited_once()

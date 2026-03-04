@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from types import SimpleNamespace
 from src.agents.orchestrator import GovGigOrchestrator
 from src.tools.query_classifier import QueryIntent
 from src.config import settings
@@ -152,6 +153,34 @@ def test_low_confidence_label_applied_when_weak_support(mock_format, mock_prompt
     assert "low-confidence label applied" in " ".join(result["agent_path"])
 
 
+@patch('src.agents.orchestrator.get_synthesizer_prompt')
+@patch('src.agents.orchestrator.format_documents')
+def test_synthesize_response_uses_current_run_documents_only(mock_format, mock_prompt, orchestrator):
+    """Synthesis should ignore checkpointed docs from prior turns."""
+    mock_format.return_value = "Formatted Docs"
+    mock_prompt.return_value = "System Prompt"
+
+    state = {
+        "query": "test query",
+        "run_offsets": {"retrieved_documents": 1},
+        "retrieved_documents": [
+            {"content": "Old unrelated checkpoint doc.", "score": 0.95},
+            {"content": "Current cited doc [FAR 52.236-2].", "score": 0.2},
+        ],
+    }
+
+    mock_response = MagicMock(spec=AIMessage)
+    mock_response.content = "Current cited doc [FAR 52.236-2]."
+    orchestrator.synthesizer_llm.invoke.return_value = mock_response
+
+    result = orchestrator._synthesize_response(state)
+
+    sent_docs = mock_format.call_args.args[0]
+    assert len(sent_docs) == 1
+    assert sent_docs[0]["content"] == "Current cited doc [FAR 52.236-2]."
+    assert result["confidence_score"] == pytest.approx(0.2)
+
+
 def test_run_sync(orchestrator):
     """Test synchronous execution wrapper."""
     mock_output = {
@@ -175,6 +204,38 @@ def test_run_sync(orchestrator):
     assert result["quality_metrics"]["quality_score"] == 0.82
     assert result["low_confidence"] is False
     assert result["regulation_types"] == ["FAR"]
+
+
+def test_run_sync_slices_accumulated_lists_with_checkpointer(orchestrator):
+    """run_sync should return only current-turn deltas when checkpoint state exists."""
+    orchestrator.checkpointer = object()
+    orchestrator.app.get_state = MagicMock(return_value=SimpleNamespace(values={
+        "agent_path": ["old-path"],
+        "errors": ["old-error"],
+        "thought_process": ["old-thought"],
+        "retrieved_documents": [{"content": "old-doc"}],
+        "regulation_types_used": ["OLD"],
+    }))
+    orchestrator.app.invoke = MagicMock(return_value={
+        "generated_response": "Test Response",
+        "retrieved_documents": [{"content": "old-doc"}, {"content": "new-doc"}],
+        "confidence_score": 0.9,
+        "quality_metrics": {"quality_score": 0.82, "low_confidence": False},
+        "low_confidence": False,
+        "agent_path": ["old-path", "new-path"],
+        "thought_process": ["old-thought", "new-thought"],
+        "regulation_types_used": ["OLD", "NEW"],
+        "errors": ["old-error", "new-error"],
+        "cot_enabled": True,
+    })
+
+    result = orchestrator.run_sync("test query", {"thread_id": "t1", "cot": True})
+
+    assert result["documents"] == [{"content": "new-doc"}]
+    assert result["agent_path"] == ["new-path"]
+    assert result["thought_process"] == ["new-thought"]
+    assert result["regulation_types"] == ["NEW"]
+    assert result["errors"] == ["new-error"]
 
 
 @patch('src.agents.orchestrator.get_synthesizer_prompt')

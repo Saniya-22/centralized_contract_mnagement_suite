@@ -114,6 +114,7 @@ class RetrievalCritique:
         return {
             "passed": passed,
             "score": normalized_score,
+            "raw_score": score,
             "reason": reason,
         }
 
