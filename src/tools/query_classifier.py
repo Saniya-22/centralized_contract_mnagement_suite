@@ -333,17 +333,18 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
     """Classify a user query with a robust multi-layered (HIC) waterfall.
 
     Waterfall Logic:
-      1. Layer 1: Enhanced Regex (Fastest, High Confidence)
-      2. Layer 2: Micro-LLM Fallback (Robust extraction for sloppy text)
-      3. Layer 3: Semantic Intent (Catches synonyms/phrasing)
-      4. Layer 4: Deterministic Source Match (Safety net)
+      1. Layer 1: Enhanced Regex Clause Extract (1.0)
+      2. Layer 2: Deterministic Source Match (0.8)
+      3. Layer 3: Deterministic Keyword Match (0.6)
+      4. Layer 4: Semantic Intent Embedding (0.82+)
+      5. Layer 5: Micro-LLM Fallback (0.9 - gated)
     """
     if not query or not query.strip():
         return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
 
     normalised = _normalize_query(query)
 
-    # ── 1. Layer 1: Exact clause reference ─────────────────────────────────────────────
+    # ── 1. Layer 1: Exact clause reference (1.0) ───────────────────────────────────
     match = _CLAUSE_PATTERN.search(normalised)
     if match:
         raw_source = match.group(1)
@@ -359,30 +360,7 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
             regulation_type  = source,
         )
 
-    # ── 2. Layer 2: Micro-LLM Fallback ────────────────────────────────────────
-    # We try LLM here if regex failed, to catch sloppy clause refs before general search
-    llm_match = _extract_clause_llm(normalised)
-    if llm_match:
-        source, num = llm_match
-        norm_source = _normalise_source(source)
-        return ClassificationResult(
-            intent           = QueryIntent.CLAUSE_LOOKUP,
-            confidence       = 0.9,
-            clause_reference = f"{norm_source} {num}",
-            clause_source    = norm_source,
-            clause_number    = num,
-            regulation_type  = norm_source,
-        )
-
-    # ── 3. Layer 3: Semantic Intent ──────────────────────────────────────────
-    sem_intent, sem_conf = _get_semantic_intent(normalised)
-    if sem_intent == QueryIntent.REGULATION_SEARCH:
-        return ClassificationResult(
-            intent     = QueryIntent.REGULATION_SEARCH,
-            confidence = sem_conf,
-        )
-
-    # ── 4. Layer 4: Deterministic Source Match ────────────────────────────────────
+    # ── 2. Layer 2: Deterministic Source Match (0.8) ───────────────────────────────
     source_match = _SOURCE_PATTERN.search(normalised)
     if source_match:
         source = _normalise_source(source_match.group(1))
@@ -392,5 +370,49 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
             regulation_type = source,
         )
 
-    # ── 5. Out of scope ───────────────────────────────────────────────────────
+    # ── 3. Layer 3: Deterministic Keyword Match (0.6) ────────────────────────────
+    matched_kws = []
+    for kw, pattern in _KW_PATTERNS:
+        if pattern.search(normalised):
+            matched_kws.append(kw)
+    
+    if matched_kws:
+        return ClassificationResult(
+            intent           = QueryIntent.REGULATION_SEARCH,
+            confidence       = 0.6,
+            matched_keywords = matched_kws,
+            regulation_type  = _infer_regulation_hint(normalised),
+        )
+
+    # ── 4. Layer 4: Semantic Intent (0.82+) ──────────────────────────────────────
+    sem_intent, sem_conf = _get_semantic_intent(normalised)
+    if sem_intent == QueryIntent.REGULATION_SEARCH:
+        return ClassificationResult(
+            intent     = QueryIntent.REGULATION_SEARCH,
+            confidence = sem_conf,
+        )
+
+    # ── 5. Layer 5: Micro-LLM Fallback (0.9 - Gated) ────────────────────────────
+    # Heuristic Gate: Only trigger LLM if there is a "regulatory signal" 
+    # (mentions of clause/section/part or numbers after source-like strings)
+    # to avoid latency on obvious OOS queries.
+    regulatory_signals = {"clause", "section", "part", "subpart", "article", "provision"}
+    has_signal = any(s in normalised.lower() for s in regulatory_signals)
+    has_digit  = any(c.isdigit() for c in normalised)
+    
+    if has_signal or has_digit:
+        llm_match = _extract_clause_llm(normalised)
+        if llm_match:
+            source, num = llm_match
+            norm_source = _normalise_source(source)
+            return ClassificationResult(
+                intent           = QueryIntent.CLAUSE_LOOKUP,
+                confidence       = 0.9,
+                clause_reference = f"{norm_source} {num}",
+                clause_source    = norm_source,
+                clause_number    = num,
+                regulation_type  = norm_source,
+            )
+
+    # ── 6. Out of scope ────────────────────────────────────────────────────────────
     return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)

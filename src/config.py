@@ -30,13 +30,15 @@ class Settings(BaseSettings):
     PG_HOST: str = "localhost"
     PG_PORT: int = 5432
     PG_DB: str = "daedalus"
-    PG_USER: str = "postgres"
+    PG_USER: str = "daedalus_admin"
     PG_PASSWORD: str
+    PG_SSLMODE: str = "disable"                 # disable|require (default disable for local)
     PG_POOL_MIN: int = 2
     PG_POOL_MAX: int = 10
     
     # Database Tables
     PG_DENSE_TABLE: str = "embeddings_dense"
+    PG_SPARSE_TABLE: str = "embeddings_sparse"
     REGULATIONS_NAMESPACE: str = "public-regulations"
 
     # Vector Search
@@ -75,6 +77,8 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ADMIN_API_KEY: Optional[str] = None           # ECS secret for operational endpoints
+    COOKIE_SECRET: Optional[str] = None           # ECS secret for session management
     
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
@@ -132,12 +136,18 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Construct database URL"""
-        return f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
+        base = f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
+        if self.PG_SSLMODE != "disable":
+            base += f"?sslmode={self.PG_SSLMODE}"
+        return base
     
     @property
     def async_database_url(self) -> str:
         """Construct async database URL"""
-        return f"postgresql+asyncpg://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
+        base = f"postgresql+asyncpg://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
+        if self.PG_SSLMODE != "disable":
+            base += f"?sslmode={self.PG_SSLMODE}"
+        return base
 
 
 # Global settings instance

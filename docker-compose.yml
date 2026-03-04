@@ -15,7 +15,7 @@ services:
       - PG_DB=${PG_DB:-daedalus}
       - PG_USER=${PG_USER:-postgres}
       - PG_PASSWORD=${PG_PASSWORD}
-      - MODEL_NAME=${MODEL_NAME:-gpt-4o}
+      - MODEL_NAME=${MODEL_NAME:-gpt-4o-mini}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       - postgres
