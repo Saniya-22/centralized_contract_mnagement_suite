@@ -1,31 +1,22 @@
 """Deterministic query intent classifier.
 
-Replaces the gpt-4o router + tool-selector LLM calls with a fast, zero-cost
-local classifier.  This alone removes 2 LLM round-trips (~3–6 seconds) from
-every single query.
+Replaces the gpt-4o router + tool-selector LLM calls with a fast, multi-layered
+local classifier. This removed 2 LLM round-trips (~3–6 seconds) for standard
+regulations.
 
 Design principles
 -----------------
-- No LLM dependency — purely regex + keyword matching, runs in <1 ms
-- Word-boundary keyword matching — no false positives from substrings
-- Confidence scoring — every result carries a 0.0–1.0 confidence value
-- LRU-cached — identical queries are free after the first classification
-- Single responsibility — classify intent and extract structured metadata
-- Testable — pure function, no side effects, no I/O
-- Extensible — add new intent types without touching orchestrator/agent code
+- Waterfall Logic — layers run sequentially until a high-confidence match is found.
+- Hybrid Architecture — Uses deterministic regex for speed (Layer 1-3) and 
+  semantic embeddings/GPT-4o-mini for fallback (Layer 4-5).
+- Word-boundary keyword matching — prevents false positives from substrings.
+- Confidence scoring — every result carries a 0.0–1.0 confidence value.
+- Async Cache — identical queries are free after the first classification.
+- Telemetry — provides visibility into which layer triggered the result.
 
-Intent types
-------------
-CLAUSE_LOOKUP       Exact clause reference detected (FAR 52.x, DFARS 252.x, EM385, 48 CFR, OSHA, HSAR …)
-REGULATION_SEARCH   General regulatory question — route to hybrid RAG search
-OUT_OF_SCOPE        Nothing regulatory detected — candidate for refusal
-
-Confidence scale
-----------------
-1.0   Exact clause reference matched
-0.8   Regulatory source name (FAR / DFARS / …) present
-0.6   Regulatory keyword(s) matched
-0.0   Out of scope / empty query
+Note on performance:
+Layers 1-3 are extremely fast (< 1ms). Layers 4 and 5 involve network I/O
+(OpenAI API) and contribute ~200-500ms of latency.
 """
 
 from __future__ import annotations
@@ -37,8 +28,7 @@ import os
 import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum
-from functools import lru_cache
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 
 # ── Intent Enum ───────────────────────────────────────────────────────────────
@@ -283,8 +273,10 @@ def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
 
 # ── Waterfall Layers ─────────────────────────────────────────────────────────
 
-def _get_semantic_intent(query: str) -> Tuple[QueryIntent, float]:
-    """Layer 2: Semantic similarity check via embeddings."""
+_ASYNC_CACHE: Dict[str, ClassificationResult] = {}
+
+async def _get_semantic_intent(query: str) -> Tuple[QueryIntent, float]:
+    """Layer 4: Semantic similarity check via embeddings."""
     from src.tools.llm_tools import get_embedding
     
     centroids = _load_centroids()
@@ -303,8 +295,8 @@ def _get_semantic_intent(query: str) -> Tuple[QueryIntent, float]:
     except Exception:
         return QueryIntent.OUT_OF_SCOPE, 0.0
 
-def _extract_clause_llm(query: str) -> Optional[Tuple[str, str]]:
-    """Layer 3: Micro-LLM fallback for messy extraction."""
+async def _extract_clause_llm(query: str) -> Optional[Tuple[str, str]]:
+    """Layer 5: Micro-LLM fallback for messy extraction."""
     try:
         from src.tools.llm_tools import client
         prompt = f"""Extract the regulation source (FAR/DFARS/EM385/etc.) and the specific section/clause number from this query.
@@ -328,8 +320,7 @@ Respond ONLY with a JSON object: {{"source": "...", "number": "..."}} or null if
     return None
 
 
-@lru_cache(maxsize=512)
-def classify_query(query: Optional[str]) -> ClassificationResult:
+async def classify_query(query: Optional[str]) -> ClassificationResult:
     """Classify a user query with a robust multi-layered (HIC) waterfall.
 
     Waterfall Logic:
@@ -344,6 +335,10 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
 
     normalised = _normalize_query(query)
 
+    # ── 0. Cache Check ───────────────────────────────────────────────────────────
+    if normalised in _ASYNC_CACHE:
+        return _ASYNC_CACHE[normalised]
+
     # ── 1. Layer 1: Exact clause reference (1.0) ───────────────────────────────────
     match = _CLAUSE_PATTERN.search(normalised)
     if match:
@@ -351,7 +346,7 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
         clause_num = match.group(2).rstrip("-")
         source     = _normalise_source(raw_source)
         ref        = f"{source} {clause_num}"
-        return ClassificationResult(
+        res = ClassificationResult(
             intent           = QueryIntent.CLAUSE_LOOKUP,
             confidence       = 1.0,
             clause_reference = ref,
@@ -359,16 +354,20 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
             clause_number    = clause_num,
             regulation_type  = source,
         )
+        _ASYNC_CACHE[normalised] = res
+        return res
 
     # ── 2. Layer 2: Deterministic Source Match (0.8) ───────────────────────────────
     source_match = _SOURCE_PATTERN.search(normalised)
     if source_match:
         source = _normalise_source(source_match.group(1))
-        return ClassificationResult(
+        res = ClassificationResult(
             intent          = QueryIntent.REGULATION_SEARCH,
             confidence      = 0.8,
             regulation_type = source,
         )
+        _ASYNC_CACHE[normalised] = res
+        return res
 
     # ── 3. Layer 3: Deterministic Keyword Match (0.6) ────────────────────────────
     matched_kws = []
@@ -377,20 +376,24 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
             matched_kws.append(kw)
     
     if matched_kws:
-        return ClassificationResult(
+        res = ClassificationResult(
             intent           = QueryIntent.REGULATION_SEARCH,
             confidence       = 0.6,
             matched_keywords = matched_kws,
             regulation_type  = _infer_regulation_hint(normalised),
         )
+        _ASYNC_CACHE[normalised] = res
+        return res
 
     # ── 4. Layer 4: Semantic Intent (0.82+) ──────────────────────────────────────
-    sem_intent, sem_conf = _get_semantic_intent(normalised)
+    sem_intent, sem_conf = await _get_semantic_intent(normalised)
     if sem_intent == QueryIntent.REGULATION_SEARCH:
-        return ClassificationResult(
+        res = ClassificationResult(
             intent     = QueryIntent.REGULATION_SEARCH,
             confidence = sem_conf,
         )
+        _ASYNC_CACHE[normalised] = res
+        return res
 
     # ── 5. Layer 5: Micro-LLM Fallback (0.9 - Gated) ────────────────────────────
     # Heuristic Gate: Only trigger LLM if there is a "regulatory signal" 
@@ -398,14 +401,18 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
     # to avoid latency on obvious OOS queries.
     regulatory_signals = {"clause", "section", "part", "subpart", "article", "provision"}
     has_signal = any(s in normalised.lower() for s in regulatory_signals)
-    has_digit  = any(c.isdigit() for c in normalised)
     
-    if has_signal or has_digit:
-        llm_match = _extract_clause_llm(normalised)
+    # Refined has_digit: Look for a number with a period/dash/paren (regulation-like)
+    # or a number in a query that ALREADY matches a source name (handled by Layer 2).
+    # This specifically addresses the "I need 3 examples" false positive.
+    has_likely_number = bool(re.search(r"\d+[\.\-\(]", normalised))
+    
+    if has_signal or has_likely_number:
+        llm_match = await _extract_clause_llm(normalised)
         if llm_match:
             source, num = llm_match
             norm_source = _normalise_source(source)
-            return ClassificationResult(
+            res = ClassificationResult(
                 intent           = QueryIntent.CLAUSE_LOOKUP,
                 confidence       = 0.9,
                 clause_reference = f"{norm_source} {num}",
@@ -413,6 +420,10 @@ def classify_query(query: Optional[str]) -> ClassificationResult:
                 clause_number    = num,
                 regulation_type  = norm_source,
             )
+            _ASYNC_CACHE[normalised] = res
+            return res
 
     # ── 6. Out of scope ────────────────────────────────────────────────────────────
-    return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
+    res = ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
+    _ASYNC_CACHE[normalised] = res
+    return res

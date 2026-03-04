@@ -241,7 +241,7 @@ class GovGigOrchestrator:
         logger.info("LangGraph workflow built")
         return workflow
     
-    def _route_query(self, state: GovGigState) -> Dict[str, Any]:
+    async def _route_query(self, state: GovGigState) -> Dict[str, Any]:
         """Route the query using the deterministic QueryClassifier."""
         import time as _time
         _t0_node = _time.perf_counter()
@@ -249,7 +249,7 @@ class GovGigOrchestrator:
         query = state["query"]
         logger.info(f"[Router] Classifying query: '{query[:100]}...'")
 
-        classification = classify_query(query)
+        classification = await classify_query(query)
         intent         = classification.intent
 
         # Map intent to graph routing decision
