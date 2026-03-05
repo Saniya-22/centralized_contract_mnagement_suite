@@ -6,11 +6,15 @@ import time
 from datetime import datetime
 import json
 import os
+import uuid
+import asyncio
+import websockets
 from jose import jwt
 
 # --- CONFIGURATION ---
 API_URL = "http://localhost:8000/api/v1/query"
-REQUEST_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_REQUEST_TIMEOUT", "90"))
+WS_URL = "ws://localhost:8000/ws/chat"
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_REQUEST_TIMEOUT", "120"))
 ST_TITLE = "GovGig AI - Regulatory Command Center"
 PRIMARY_COLOR = "#00D1FF"
 SECONDARY_COLOR = "#7000FF"
@@ -177,6 +181,8 @@ def create_gauge(value, title, unit="s", max_val=15):
 # --- INITIAL STATE ---
 if 'history' not in st.session_state:
     st.session_state.history = []
+if 'thread_id' not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())
 if 'last_perf' not in st.session_state:
     st.session_state.last_perf = {"latency": 0.0, "confidence": 0.0}
 
@@ -236,72 +242,82 @@ with col_main:
         # Add user msg to state
         st.session_state.history.append({"role": "user", "text": prompt})
         
-        # Call API
-        with st.status("🔍 Analyzing documents...", expanded=True) as status:
+        # ── STREAMING LOGIC (WebSockets) ──
+        async def stream_query():
             t0 = time.perf_counter()
+            token = generate_internal_token()
+            
+            clean_history = [
+                {"role": h["role"], "text": h.get("text", "")}
+                for h in st.session_state.history[:-1]
+            ]
+            
             try:
-                token = generate_internal_token()
-                headers = {"Authorization": f"Bearer {token}"} if token else {}
-                
-                # Sanitize history: only send role + text to the backend
-                # (sending full AI responses with documents/metadata causes
-                # the backend to misinterpret AI text as new queries)
-                clean_history = [
-                    {"role": h["role"], "text": h.get("text", "")}
-                    for h in st.session_state.history[:-1]
-                ]
-
-                response = httpx.post(
-                    API_URL,
-                    json={
+                async with websockets.connect(WS_URL, ping_timeout=REQUEST_TIMEOUT_SECONDS) as ws:
+                    # 1. Authenticate & Query
+                    payload = {
+                        "token": token,
                         "query": prompt,
                         "history": clean_history,
+                        "thread_id": st.session_state.thread_id,
                         "cot": False
-                    },
-                    headers=headers,
-                    timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=10.0),
-                )
-                response.raise_for_status()
-                
-                res_data = response.json()
-                latency = time.perf_counter() - t0
-                
-                # Update agent path status
-                if 'agent_path' in res_data:
-                    for step in res_data['agent_path']:
-                        st.write(f"✅ {step}")
-                
-                # Update state
-                st.session_state.last_perf = {
-                    "latency": round(latency, 2),
-                    "confidence": res_data.get('confidence', 0.85)
-                }
-                
-                ai_text = res_data.get('response', 'No response received.')
-                docs = res_data.get('documents', [])
-                
-                st.session_state.history.append({
-                    "role": "ai", 
-                    "text": ai_text, 
-                    "documents": docs,
-                    "agent_path": res_data.get('agent_path', [])
-                })
-                
+                    }
+                    await ws.send(json.dumps(payload))
+                    
+                    # 2. Setup UI placeholders
+                    full_response = ""
+                    with st.chat_message("assistant"):
+                        message_placeholder = st.empty()
+                    
+                    # 3. Stream loop
+                    while True:
+                        msg_raw = await ws.recv()
+                        msg = json.loads(msg_raw)
+                        
+                        if msg["type"] == "token":
+                            full_response += msg["data"]
+                            message_placeholder.markdown(full_response + "▌")
+                        
+                        elif msg["type"] == "complete":
+                            res_data = msg["data"]
+                            latency = time.perf_counter() - t0
+                            
+                            # Final update for this message
+                            message_placeholder.markdown(full_response)
+                            
+                            st.session_state.last_perf = {
+                                "latency": round(latency, 2),
+                                "confidence": res_data.get('confidence', 0.85)
+                            }
+                            
+                            st.session_state.history.append({
+                                "role": "ai", 
+                                "text": full_response, 
+                                "documents": res_data.get('documents', []),
+                                "agent_path": res_data.get('agent_path', [])
+                            })
+                        
+                        elif msg["type"] == "done":
+                            break
+                        
+                        elif msg["type"] == "error":
+                            st.error(f"Backend Error: {msg['data'].get('message')}")
+                            break
+                            
+                    return True
+
+            except Exception as e:
+                st.error(f"WebSocket Connection Failed: {str(e)}")
+                return False
+
+        # Run the async stream
+        with st.status("🔍 Analyzing documents (Streaming)...", expanded=True) as status:
+            success = asyncio.run(stream_query())
+            if success:
                 status.update(label="✅ Analysis Completed", state="complete", expanded=False)
                 st.rerun()
-
-            except httpx.ReadTimeout:
-                status.update(label="❌ Backend Timeout", state="error")
-                st.error(
-                    f"Backend took longer than {REQUEST_TIMEOUT_SECONDS:.0f}s. "
-                    "Please retry, or increase DASHBOARD_REQUEST_TIMEOUT."
-                )
-            except httpx.HTTPStatusError as e:
-                status.update(label="❌ Backend HTTP Error", state="error")
-                st.error(f"Backend returned HTTP {e.response.status_code}: {e.response.text[:300]}")
-            except Exception as e:
-                status.update(label="❌ Error in Retrieval", state="error")
-                st.error(f"Backend Error: {str(e)}")
+            else:
+                status.update(label="❌ Connection Failed", state="error")
 
 with col_evidence:
     st.markdown("### 🗃️ Evidence Viewer")

@@ -361,7 +361,8 @@ class GovGigOrchestrator:
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_message),
             ]
-            response = self.synthesizer_llm.invoke(messages)
+            # Use a tag to distinguish this final user-facing LLM call from internal ones (like self-healing)
+            response = self.synthesizer_llm.invoke(messages, config={"tags": ["synthesizer_token"]})
             quality_metrics = self._assess_answer_quality(response.content, documents, evidence, state)
             final_response = response.content
             hard_block_applied = False
@@ -596,55 +597,65 @@ class GovGigOrchestrator:
             "errors": []
         }
         
+        accumulated_docs = []
+        final_complete_data = None
+        
         try:
             # Stream events from graph using astream_events to catch tokens
             async for event in self.app.astream_events(initial_state, config=config, version="v1"):
                 kind = event["event"]
 
                 # Handle node completion (steps)
-                if kind == "on_chain_end" and event["name"] == "LangGraph":
-                    # This is the final state after the graph finishes
-                    final_state = event["data"]["output"]
-                    final_agent_path = final_state.get("agent_path", [])[_acc_lists["agent_path"]:]
-                    final_errors = final_state.get("errors", [])[_acc_lists["errors"]:]
-                    final_thoughts = final_state.get("thought_process", [])[_acc_lists["thought_process"]:]
-                    final_docs = final_state.get("retrieved_documents", [])[_acc_lists["retrieved_documents"]:]
-                    final_reg_types = final_state.get("regulation_types_used", [])[_acc_lists["regulation_types_used"]:]
-                    yield {
-                        "type": "complete",
-                        "data": {
+                if kind == "on_chain_end":
+                    # Capture documents as soon as data_retrieval finishes
+                    if event["name"] == "data_retrieval":
+                        output = event["data"].get("output") or {}
+                        node_docs = output.get("retrieved_documents", [])
+                        if node_docs:
+                            accumulated_docs.extend(node_docs)
+
+                    # Filter for the final state of the whole graph (top-level LangGraph chain)
+                    # This ensures we only send ONE 'complete' event at the very end.
+                    if event["name"] == "LangGraph" and event["data"].get("output"):
+                        final_state = event["data"]["output"]
+                        
+                        # Use accumulated docs if the state doesn't have them yet (common in streaming)
+                        docs_to_send = final_state.get('retrieved_documents', [])[_acc_lists["retrieved_documents"]:]
+                        if not docs_to_send:
+                            docs_to_send = accumulated_docs
+
+                        final_complete_data = {
                             "response": final_state.get('generated_response'),
-                            "documents": final_docs,
+                            "documents": docs_to_send,
                             "confidence": final_state.get('confidence_score'),
                             "quality_metrics": final_state.get('quality_metrics'),
                             "low_confidence": final_state.get('low_confidence'),
-                            "agent_path": final_agent_path,
-                            "thought_process": final_thoughts if final_state.get('cot_enabled') else None,
-                            "regulation_types": final_reg_types,
+                            "agent_path": final_state.get("agent_path", [])[_acc_lists["agent_path"]:],
+                            "thought_process": final_state.get('thought_process', [])[_acc_lists["thought_process"]:] if final_state.get('cot_enabled') else None,
+                            "regulation_types": final_state.get('regulation_types_used', [])[_acc_lists["regulation_types_used"]:],
                             "ui_action": final_state.get('ui_action'),
-                            "errors": final_errors,
+                            "errors": final_state.get('errors', [])[_acc_lists["errors"]:],
                         }
-                    }
+                        # We don't yield yet, we wait for the stream to naturally progress or finish
 
                 elif kind == "on_chat_model_stream":
-                    # Capture tokens from any streaming model (e.g., synthesizer)
-                    content = event["data"]["chunk"].content
-                    if content:
-                        yield {
-                            "type": "token",
-                            "data": content
-                        }
+                    # Capture tokens ONLY from the synthesizer (final response)
+                    # This prevents tokens from self-healing/expansion leaking into the UI
+                    tags = event.get("tags", [])
+                    if "synthesizer_token" in tags:
+                        content = event["data"]["chunk"].content
+                        if content:
+                            yield {
+                                "type": "token",
+                                "data": content
+                            }
 
-                elif kind == "on_chain_end":
-                    # Handle node boundaries (like the old 'step' event)
-                    # We only care about nodes we defined
-                    node_name = event.get("name")
-                    if node_name in ["router", "data_retrieval", "synthesizer"]:
-                        yield {
-                            "type": "step",
-                            "node": node_name,
-                            "data": event["data"]["output"]
-                        }
+            # After the stream loop finishes, yield the collected complete event
+            if final_complete_data:
+                yield {
+                    "type": "complete",
+                    "data": final_complete_data
+                }
             
             logger.info("Orchestrator run completed successfully")
             
