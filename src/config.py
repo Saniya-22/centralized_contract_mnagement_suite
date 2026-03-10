@@ -76,9 +76,13 @@ class Settings(BaseSettings):
     # Authentication
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+    LOGIN_LOCKOUT_MINUTES: int = 15              # Lock account for this long after max failed attempts
+    LOGIN_MAX_ATTEMPTS: int = 5                   # Max failed login attempts before lockout
+    RATE_LIMIT_MAX_REQUESTS: int = 10             # Per-user request limit (query endpoint)
+    RATE_LIMIT_WINDOW_SECONDS: int = 60           # Sliding window for rate limit
     ADMIN_API_KEY: Optional[str] = None           # ECS secret for operational endpoints
-    COOKIE_SECRET: Optional[str] = None           # ECS secret for session management
+    COOKIE_SECRET: Optional[str] = None            # ECS secret for session management
     
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]

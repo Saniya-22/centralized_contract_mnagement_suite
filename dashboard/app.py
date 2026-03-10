@@ -12,8 +12,13 @@ import websockets
 from jose import jwt
 
 # --- CONFIGURATION ---
-API_URL = "http://localhost:8000/api/v1/query"
-WS_URL = "ws://localhost:8000/ws/chat"
+# Set API_BASE_URL to match your backend (e.g. http://localhost:8001 if backend runs on 8001)
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_URL = f"{API_BASE}/api/v1/query"
+FEEDBACK_URL = f"{API_BASE}/api/v1/feedback"
+LOGIN_URL = f"{API_BASE}/api/v1/auth/login"
+SIGNUP_URL = f"{API_BASE}/api/v1/auth/signup"
+WS_URL = (API_BASE.replace("http://", "ws://").replace("https://", "wss://")) + "/ws/chat"
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_REQUEST_TIMEOUT", "120"))
 ST_TITLE = "GovGig AI - Regulatory Command Center"
 PRIMARY_COLOR = "#00D1FF"
@@ -136,11 +141,11 @@ try:
     from src.config import settings
     from datetime import timedelta
 except ImportError:
-    # Fallback if src is still not in path
+    # Fallback if src is still not in path (align with backend default 24h)
     class DummySettings:
         JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "default_secret")
         JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-        ACCESS_TOKEN_EXPIRE_MINUTES = 60
+        ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
     settings = DummySettings()
     from datetime import timedelta
 
@@ -185,29 +190,120 @@ if 'thread_id' not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
 if 'last_perf' not in st.session_state:
     st.session_state.last_perf = {"latency": 0.0, "confidence": 0.0}
+if 'feedback_sent' not in st.session_state:
+    st.session_state.feedback_sent = set()
+if 'access_token' not in st.session_state:
+    st.session_state.access_token = None
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
+if 'user_name' not in st.session_state:
+    st.session_state.user_name = None
+if 'auth_view' not in st.session_state:
+    st.session_state.auth_view = "login"  # "login" or "signup"
 
-# --- SIDEBAR: Telemetry & Config ---
+# --- AUTH GATE: User cannot query without logging in ---
+if not st.session_state.access_token:
+    st.markdown(f"## <span style='color:{PRIMARY_COLOR};'>Gov</span>Gig Insight AI", unsafe_allow_html=True)
+    st.markdown("You must **log in** or **sign up** to access the AI modules. You cannot submit queries without an account.")
+    st.markdown("---")
+
+    # Sign up and Log in buttons
+    btn_col1, btn_col2, _ = st.columns([1, 1, 2])
+    with btn_col1:
+        if st.button("Log in", type="primary", use_container_width=True, key="btn_show_login"):
+            st.session_state.auth_view = "login"
+            st.rerun()
+    with btn_col2:
+        if st.button("Sign up", type="secondary", use_container_width=True, key="btn_show_signup"):
+            st.session_state.auth_view = "signup"
+            st.rerun()
+
+    st.markdown("---")
+    if st.session_state.auth_view == "login":
+        st.subheader("Log in")
+        with st.form("login_form"):
+            login_email = st.text_input("Email (username)", placeholder="you@example.com", key="login_email")
+            login_password = st.text_input("Password", type="password", key="login_password")
+            login_submit = st.form_submit_button("Log in")
+        if login_submit:
+            if not login_email or not login_password:
+                st.error("Please enter email and password.")
+            else:
+                try:
+                    r = httpx.post(LOGIN_URL, json={"email": login_email.strip(), "password": login_password}, timeout=15)
+                    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                    status_msg = data.get("status", "")
+                    if r.status_code == 200 and status_msg == "Login successful":
+                        st.session_state.access_token = data.get("access_token")
+                        st.session_state.user_email = data.get("email") or login_email
+                        st.session_state.user_name = data.get("full_name") or ""
+                        st.success("Login successful.")
+                        st.rerun()
+                    else:
+                        detail = data.get("detail", "Invalid email or password.")
+                        if r.status_code == 423:
+                            sec = data.get("remaining_seconds", 0)
+                            st.error(f"Account locked. Try again in {sec // 60} minutes.")
+                        else:
+                            st.error(f"Login unsuccessful: {detail}")
+                except Exception as e:
+                    st.error(f"Could not connect: {e}")
+        st.caption("Don't have an account? Click **Sign up** above.")
+    else:
+        st.subheader("Sign up")
+        with st.form("signup_form"):
+            signup_name = st.text_input("Full name", placeholder="Your name", key="signup_name")
+            signup_email = st.text_input("Email (username)", placeholder="you@example.com", key="signup_email")
+            signup_password = st.text_input("Password", type="password", key="signup_password", help="At least 8 characters")
+            signup_confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
+            signup_submit = st.form_submit_button("Sign up")
+        if signup_submit:
+            if not signup_name or not signup_email or not signup_password or not signup_confirm:
+                st.error("Please fill all fields.")
+            elif signup_password != signup_confirm:
+                st.error("Passwords do not match.")
+            elif len(signup_password) < 8:
+                st.error("Password must be at least 8 characters.")
+            else:
+                try:
+                    r = httpx.post(SIGNUP_URL, json={
+                        "full_name": signup_name.strip(),
+                        "email": signup_email.strip(),
+                        "password": signup_password,
+                        "confirm_password": signup_confirm,
+                    }, timeout=15)
+                    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                    status_msg = data.get("status", "")
+                    if r.status_code == 201 and status_msg == "Signup successful":
+                        st.success(f"Signup successful for **{data.get('full_name', signup_name)}**. Please log in.")
+                    else:
+                        st.error(f"Signup unsuccessful: {data.get('detail', 'Please try again.')}")
+                except Exception as e:
+                    st.error(f"Could not connect: {e}")
+        st.caption("Already have an account? Click **Log in** above.")
+
+    st.stop()
+
+# --- SIDEBAR: Telemetry & Config (only when logged in) ---
 with st.sidebar:
     st.image("https://raw.githubusercontent.com/streamlit/normani-avatars/main/avatars/female/12.png", width=60)
     st.title("System Nexus")
-    st.write(f"Logged in as: **Pilot User**")
-    
+    st.write(f"Logged in as: **{st.session_state.user_email or 'User'}**")
+    if st.button("Log out", type="secondary", use_container_width=True):
+        st.session_state.access_token = None
+        st.session_state.user_email = None
+        st.session_state.user_name = None
+        st.rerun()
     st.divider()
-    
-    # Telemetry Gauges
     st.subheader("Real-time Performance")
     latency_gauge = create_gauge(st.session_state.last_perf['latency'], "Latency", "s")
     st.plotly_chart(latency_gauge, use_container_width=True, key="latency_chart")
-    
     st.divider()
-    
     st.subheader("Session Intelligence")
     st.info(f"Connected to GovGig Backend v2.4\nStatus: Online ✅")
-    
     if st.button("Reset Session Memory", type="secondary", use_container_width=True):
         st.session_state.history = []
         st.rerun()
-    
 
 # --- MAIN UI ---
 col_main, col_evidence = st.columns([0.65, 0.35])
@@ -219,11 +315,50 @@ with col_main:
     # Chat History Display
     chat_container = st.container(height=500, border=False)
     with chat_container:
-        for chat in st.session_state.history:
+        for i, chat in enumerate(st.session_state.history):
             if chat['role'] == 'user':
                 st.markdown(f'<div class="user-msg"><b>You:</b><br>{chat["text"]}</div>', unsafe_allow_html=True)
             else:
                 st.markdown(f'<div class="ai-msg"><b>AI Assistant:</b><br>{chat["text"]}</div>', unsafe_allow_html=True)
+                query_id = chat.get("query_id")
+                if query_id and query_id not in st.session_state.feedback_sent:
+                    col_up, col_down, _ = st.columns([1, 1, 4])
+                    with col_up:
+                        if st.button("👍 Good", key=f"fb_up_{i}_{query_id[:8]}"):
+                            token = st.session_state.access_token
+                            if token:
+                                try:
+                                    r = httpx.post(
+                                        FEEDBACK_URL,
+                                        json={"query_id": query_id, "response": "good"},
+                                        headers={"Authorization": f"Bearer {token}"},
+                                        timeout=10,
+                                    )
+                                    if r.status_code == 201:
+                                        st.session_state.feedback_sent.add(query_id)
+                                        st.success("Thanks for your feedback!")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Could not send feedback: {e}")
+                    with col_down:
+                        if st.button("👎 Bad", key=f"fb_down_{i}_{query_id[:8]}"):
+                            token = st.session_state.access_token
+                            if token:
+                                try:
+                                    r = httpx.post(
+                                        FEEDBACK_URL,
+                                        json={"query_id": query_id, "response": "bad"},
+                                        headers={"Authorization": f"Bearer {token}"},
+                                        timeout=10,
+                                    )
+                                    if r.status_code == 201:
+                                        st.session_state.feedback_sent.add(query_id)
+                                        st.success("Thanks for your feedback!")
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Could not send feedback: {e}")
+                elif query_id and query_id in st.session_state.feedback_sent:
+                    st.caption("✓ Feedback recorded")
                 if 'documents' in chat and chat['documents']:
                     with st.expander("Show Linked Regulations & Evidence"):
                         for doc in chat['documents']:
@@ -239,14 +374,16 @@ with col_main:
     prompt = st.chat_input("Ask a regulatory question (e.g., 'What is FAR 52.219-8?')")
 
     if prompt:
+        if not st.session_state.access_token:
+            st.error("Session expired. Please log in again.")
+            st.stop()
         # Add user msg to state
         st.session_state.history.append({"role": "user", "text": prompt})
-        
-        # ── STREAMING LOGIC (WebSockets) ──
+
         async def stream_query():
             t0 = time.perf_counter()
-            token = generate_internal_token()
-            
+            token = st.session_state.access_token
+
             clean_history = [
                 {"role": h["role"], "text": h.get("text", "")}
                 for h in st.session_state.history[:-1]
@@ -291,10 +428,11 @@ with col_main:
                             }
                             
                             st.session_state.history.append({
-                                "role": "ai", 
-                                "text": full_response, 
+                                "role": "ai",
+                                "text": full_response,
                                 "documents": res_data.get('documents', []),
-                                "agent_path": res_data.get('agent_path', [])
+                                "agent_path": res_data.get('agent_path', []),
+                                "query_id": res_data.get('query_id'),
                             })
                         
                         elif msg["type"] == "done":

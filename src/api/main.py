@@ -10,7 +10,10 @@ import logging
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+import bcrypt
+from jose import jwt
 
 from src.config import settings
 from src.agents.orchestrator import GovGigOrchestrator
@@ -89,9 +92,24 @@ class InMemoryRateLimiter:
         return True
 
 
-rate_limiter = InMemoryRateLimiter(max_requests=10, window_seconds=60)
+rate_limiter = InMemoryRateLimiter(
+    max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
+    window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
+)
 
 _MAX_QUERY_LENGTH = 2000  # DoS guard
+
+
+def _user_id_to_uuid(uid: Any) -> str:
+    """Convert user_id from JWT to a UUID string for storage (user_feedback table)."""
+    if uid is None:
+        return str(uuid.uuid4())
+    s = str(uid)
+    try:
+        uuid.UUID(s)
+        return s
+    except (ValueError, TypeError):
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, s))
 
 
 # Pydantic models
@@ -116,6 +134,8 @@ class QueryResponse(BaseModel):
     regulation_types: List[str]
     ui_action: Optional[Dict[str, Any]] = None
     errors: List[str]
+    user_id: str  # UUID string (authenticated user)
+    query_id: str  # UUID string (this request)
 
 
 class ClauseResponse(BaseModel):
@@ -124,6 +144,49 @@ class ClauseResponse(BaseModel):
     clause_reference: str
     clause: Optional[Dict[str, Any]] = None
     context: Optional[str] = None
+
+
+class SignupRequest(BaseModel):
+    """Request model for signup endpoint"""
+    full_name: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("confirm_password")
+    @classmethod
+    def passwords_match(cls, v: str, info) -> str:
+        if "password" in info.data and v != info.data["password"]:
+            raise ValueError("password and confirm_password do not match")
+        return v
+
+
+class LoginRequest(BaseModel):
+    """Request model for login endpoint"""
+    email: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class FeedbackRequest(BaseModel):
+    """Request model for feedback endpoint"""
+    query_id: str = Field(..., description="UUID of the query this feedback refers to")
+    response: str = Field(..., description="'good' (thumbs up) or 'bad' (thumbs down)")
+
+    @field_validator("response")
+    @classmethod
+    def response_must_be_good_or_bad(cls, v: str) -> str:
+        if v not in ("good", "bad"):
+            raise ValueError("response must be 'good' or 'bad'")
+        return v
+
+    @field_validator("query_id")
+    @classmethod
+    def query_id_must_be_uuid(cls, v: str) -> str:
+        try:
+            uuid.UUID(v)
+            return v
+        except (ValueError, TypeError):
+            raise ValueError("query_id must be a valid UUID")
 
 
 class HealthResponse(BaseModel):
@@ -141,11 +204,18 @@ async def startup_event():
     """Run on application startup"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     
-    # Initialize cache table, analytics table, and database connection
+    # Initialize cache, analytics, user_feedback, and auth tables
     db_ok = test_connection()
     if db_ok:
         VectorQueries.init_cache_table()
         VectorQueries.init_analytics_table()
+        VectorQueries.init_user_feedback_table()
+        VectorQueries.init_auth_tables()
+        VectorQueries.init_chat_history_table()
+        if VectorQueries.auth_tables_exist():
+            logger.info("Required auth tables (users, auth_audit_log) confirmed in database")
+        else:
+            logger.warning("Auth tables (users, auth_audit_log) may be missing; check database and init_auth_tables")
     
     if not db_ok:
         logger.warning("Database connection test failed at startup")
@@ -232,12 +302,17 @@ async def query_endpoint(
                 detail="Rate limit exceeded. Please wait a moment before trying again.",
             )
 
+        query_id = str(uuid.uuid4())
         start_time = time.time()
 
+        thread_id = request.thread_id or str(uuid.uuid4())
+        history = request.history if request.history else await run_in_threadpool(
+            VectorQueries.get_chat_history, thread_id, user_id
+        )
         context = {
             "person_id": request.person_id or user_id,
-            "thread_id": request.thread_id or str(uuid.uuid4()),
-            "history": request.history,
+            "thread_id": thread_id,
+            "history": history,
             "cot": request.cot,
             "current_date": datetime.now().strftime("%A, %B %d, %Y")
         }
@@ -262,7 +337,20 @@ async def query_endpoint(
                 )
             except Exception:
                 pass
-            return QueryResponse(**cached_result)
+            # Persist to chat_history on cache hit too
+            try:
+                response_text = cached_result.get("response") or ""
+                await run_in_threadpool(
+                    VectorQueries.insert_chat_message,
+                    thread_id, user_id, "user", request.query,
+                )
+                await run_in_threadpool(
+                    VectorQueries.insert_chat_message,
+                    thread_id, user_id, "assistant", response_text,
+                )
+            except Exception as e:
+                logger.warning(f"Chat history persist (cache hit) failed: {e}")
+            return QueryResponse(**{**cached_result, "user_id": user_id, "query_id": query_id})
 
         # 2. If no cache, run orchestrator
         result = await orchestrator.run_async(request.query, context)
@@ -288,9 +376,23 @@ async def query_endpoint(
             )
         except Exception:
             pass
-        
-        return QueryResponse(**result)
-        
+
+        # 5. Persist to chat_history (thread_id = session_id)
+        response_text = result.get("response") or ""
+        try:
+            await run_in_threadpool(
+                VectorQueries.insert_chat_message,
+                thread_id, user_id, "user", request.query,
+            )
+            await run_in_threadpool(
+                VectorQueries.insert_chat_message,
+                thread_id, user_id, "assistant", response_text,
+            )
+        except Exception as e:
+            logger.warning(f"Chat history persist failed: {e}")
+
+        return QueryResponse(**{**result, "user_id": user_id, "query_id": query_id})
+
     except HTTPException:
         raise
     except Exception as e:
@@ -355,23 +457,29 @@ async def websocket_chat(websocket: WebSocket):
                 })
                 continue
             
+            thread_id = data.get("thread_id") or data.get("person_id") or user_id or "default_thread"
+            history = data.get("history") or await run_in_threadpool(
+                VectorQueries.get_chat_history, thread_id, user_id
+            )
             context = {
                 "person_id": data.get("person_id") or user_id,
-                "thread_id": data.get("thread_id") or data.get("person_id") or user_id or "default_thread",
-                "history": data.get("history", []),
+                "thread_id": thread_id,
+                "history": history,
                 "cot": data.get("cot", True),
                 "current_date": datetime.now().strftime("%A, %B %d, %Y")
             }
-            
+
+            ws_query_id = str(uuid.uuid4())
             logger.info(f"WebSocket query: {query[:100]}...")
             ws_start_time = time.time()
-            
+
             # Stream responses — capture the last complete event for analytics
             last_complete = None
             async for event in orchestrator.run(query, context):
-                await websocket.send_json(event)
                 if isinstance(event, dict) and event.get("type") == "complete":
-                    last_complete = event.get("data", {})
+                    event["data"] = {**(event.get("data") or {}), "user_id": user_id, "query_id": ws_query_id}
+                    last_complete = event["data"]
+                await websocket.send_json(event)
             
             # Send done message
             await websocket.send_json({
@@ -390,6 +498,21 @@ async def websocket_chat(websocket: WebSocket):
                     )
             except Exception:
                 pass
+
+            # Persist to chat_history (thread_id = session_id)
+            if thread_id and user_id:
+                try:
+                    response_text = (last_complete or {}).get("response") or ""
+                    await run_in_threadpool(
+                        VectorQueries.insert_chat_message,
+                        thread_id, user_id, "user", query,
+                    )
+                    await run_in_threadpool(
+                        VectorQueries.insert_chat_message,
+                        thread_id, user_id, "assistant", response_text,
+                    )
+                except Exception as e:
+                    logger.warning(f"Chat history persist (ws) failed: {e}")
             
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
@@ -461,10 +584,178 @@ async def analytics_summary(
     hours: int = 24,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
-    """Returns aggregate query analytics for the last N hours (JWT required)."""
+    """Returns aggregate query analytics for the last N hours plus feedback counts (JWT required)."""
     summary = await run_in_threadpool(VectorQueries.get_analytics_summary, hours)
     return summary
 
+
+# ── Auth: signup and login ────────────────────────────────────────────────────
+
+
+@app.post(
+    f"{settings.API_PREFIX}/auth/signup",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Auth"],
+)
+async def signup(body: SignupRequest):
+    """Register a new user. Returns full_name and status."""
+    email = body.email.strip().lower()
+    existing = await run_in_threadpool(VectorQueries.get_user_by_email, email)
+    if existing:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"user_id": None, "full_name": body.full_name.strip(), "status": "Signup unsuccessful", "detail": "Email already registered"},
+        )
+    hashed = bcrypt.hashpw(body.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    try:
+        user_row = await run_in_threadpool(
+            VectorQueries.create_user,
+            body.full_name.strip(),
+            email,
+            hashed,
+        )
+    except Exception as e:
+        logger.exception("Signup create_user failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "user_id": None,
+                "full_name": body.full_name.strip(),
+                "status": "Signup unsuccessful",
+                "detail": str(e),
+            },
+        )
+    if not user_row:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"user_id": None, "full_name": body.full_name.strip(), "status": "Signup unsuccessful", "detail": "Registration failed"},
+        )
+    return {"user_id": str(user_row["user_id"]), "full_name": body.full_name.strip(), "status": "Signup successful"}
+
+
+@app.post(
+    f"{settings.API_PREFIX}/auth/login",
+    tags=["Auth"],
+)
+async def login(body: LoginRequest):
+    """Authenticate with email and password. Returns access_token and status. Lockout after max failed attempts for configured minutes."""
+    email = body.email.strip().lower()
+    user = await run_in_threadpool(VectorQueries.get_user_by_email, email)
+    if not user:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"user_id": None, "access_token": "", "status": "Login unsuccessful", "detail": "Invalid email or password"},
+        )
+    lock_until = user.get("lock_until")
+    if lock_until:
+        now = datetime.now(timezone.utc)
+        if lock_until.tzinfo is None:
+            lock_until = lock_until.replace(tzinfo=timezone.utc)
+        if lock_until > now:
+            delta = lock_until - now
+            remaining = int(delta.total_seconds())
+            return JSONResponse(
+                status_code=status.HTTP_423_LOCKED,
+                content={
+                    "user_id": str(user["user_id"]),
+                    "access_token": "",
+                    "status": "Login unsuccessful",
+                    "detail": "Account locked. Try again later.",
+                    "remaining_seconds": remaining,
+                },
+            )
+    if not bcrypt.checkpw(body.password.encode("utf-8"), user["hashed_password"].encode("utf-8")):
+        attempts = (user.get("failed_login_attempts") or 0) + 1
+        lock_at_five = attempts >= settings.LOGIN_MAX_ATTEMPTS
+        lock_until_dt = (datetime.now(timezone.utc) + timedelta(minutes=settings.LOGIN_LOCKOUT_MINUTES)) if lock_at_five else None
+        await run_in_threadpool(VectorQueries.update_login_failure, user["id"], lock_until_dt)
+        if lock_at_five:
+            await run_in_threadpool(
+                VectorQueries.log_auth_audit,
+                user["id"],
+                email,
+                "lockout",
+                {"reason": "max_attempts_reached", "lock_minutes": settings.LOGIN_LOCKOUT_MINUTES},
+            )
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={
+                "user_id": str(user["user_id"]),
+                "access_token": "",
+                "status": "Login unsuccessful",
+                "detail": "Invalid email or password",
+                **({"locked": True, "remaining_seconds": settings.LOGIN_LOCKOUT_MINUTES * 60} if lock_at_five else {}),
+            },
+        )
+    await run_in_threadpool(VectorQueries.update_login_success, user["id"])
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    user_id_uuid = str(user["user_id"])
+    to_encode = {"sub": user_id_uuid, "email": email, "name": user.get("full_name"), "exp": expire}
+    access_token = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return {
+        "user_id": user_id_uuid,
+        "access_token": access_token,
+        "token_type": "bearer",
+        "status": "Login successful",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "email": email,
+        "full_name": user.get("full_name") or "",
+    }
+
+
+@app.post(
+    f"{settings.API_PREFIX}/feedback",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Feedback"],
+)
+async def feedback_endpoint(
+    body: FeedbackRequest,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Record user feedback (thumbs up/down) for a query (JWT required)."""
+    user_id_raw = user.get("sub") or user.get("id") or user.get("user_id")
+    if not user_id_raw:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload: missing user identifier",
+        )
+    user_id_uuid = _user_id_to_uuid(user_id_raw)
+    ok = await run_in_threadpool(
+        VectorQueries.insert_user_feedback,
+        user_id_uuid,
+        body.query_id,
+        body.response,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save feedback",
+        )
+    return {"ok": True}
+
+
+@app.get(
+    f"{settings.API_PREFIX}/chat/history",
+    tags=["Chat"],
+)
+async def get_chat_history_endpoint(
+    thread_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Return chat history for a thread (conversation). JWT required. Scoped to current user."""
+    user_id = user.get("sub") or user.get("id") or user.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload: missing user identifier",
+        )
+    history = await run_in_threadpool(
+        VectorQueries.get_chat_history,
+        thread_id.strip(),
+        str(user_id),
+        50,
+    )
+    return {"thread_id": thread_id, "history": history}
 
 
 # Clause reference lookup endpoint

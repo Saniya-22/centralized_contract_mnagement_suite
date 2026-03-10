@@ -659,6 +659,282 @@ class VectorQueries:
         except Exception as e:
             logger.error(f"Failed to cache response: {e}")
 
+    # ─── User Feedback ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def init_user_feedback_table():
+        """Ensure the user_feedback table exists."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS user_feedback (
+            id                  SERIAL PRIMARY KEY,
+            user_id             UUID NOT NULL,
+            query_id            UUID NOT NULL,
+            feedback_response   TEXT NOT NULL CHECK (feedback_response IN ('good', 'bad')),
+            created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_feedback_user_id ON user_feedback (user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_feedback_query_id ON user_feedback (query_id);
+        CREATE INDEX IF NOT EXISTS idx_user_feedback_created_at ON user_feedback (created_at);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    logger.info("User feedback table verified")
+        except Exception as e:
+            logger.error(f"Failed to init user_feedback table: {e}")
+
+    @staticmethod
+    def insert_user_feedback(user_id: str, query_id: str, feedback_response: str) -> bool:
+        """Insert a feedback row. user_id and query_id must be valid UUID strings."""
+        sql = """
+        INSERT INTO user_feedback (user_id, query_id, feedback_response)
+        VALUES (%s::uuid, %s::uuid, %s);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (user_id, query_id, feedback_response))
+                    logger.debug(f"Feedback recorded: query_id={query_id}, response={feedback_response}")
+                    return True
+        except Exception as e:
+            logger.error(f"Failed to insert feedback: {e}")
+            return False
+
+    @staticmethod
+    def get_feedback_summary() -> Dict[str, int]:
+        """Return total, positive, and negative feedback counts."""
+        sql = """
+        SELECT
+            COUNT(*)::int AS feedback_total,
+            COUNT(*) FILTER (WHERE feedback_response = 'good')::int AS feedback_positive,
+            COUNT(*) FILTER (WHERE feedback_response = 'bad')::int AS feedback_negative
+        FROM user_feedback;
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql)
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+            return {"feedback_total": 0, "feedback_positive": 0, "feedback_negative": 0}
+        except Exception as e:
+            logger.error(f"Failed to get feedback summary: {e}")
+            return {"feedback_total": 0, "feedback_positive": 0, "feedback_negative": 0}
+
+    # ─── Auth (users, login, lockout) ──────────────────────────────────────────
+
+    @staticmethod
+    def init_auth_tables():
+        """Ensure users and auth_audit_log tables exist."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            full_name VARCHAR(255) NOT NULL,
+            user_id UUID UNIQUE DEFAULT gen_random_uuid(),
+            email VARCHAR(255) NOT NULL UNIQUE,
+            hashed_password VARCHAR(255) NOT NULL,
+            is_locked BOOLEAN DEFAULT FALSE,
+            lock_until TIMESTAMP WITH TIME ZONE,
+            failed_login_attempts INTEGER DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id UUID UNIQUE DEFAULT gen_random_uuid();
+        CREATE INDEX IF NOT EXISTS idx_users_user_id ON users (user_id);
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+        CREATE INDEX IF NOT EXISTS idx_users_lock ON users (is_locked, lock_until);
+        CREATE TABLE IF NOT EXISTS auth_audit_log (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            email VARCHAR(255),
+            event_type VARCHAR(50) NOT NULL,
+            details JSONB DEFAULT '{}',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_audit_user ON auth_audit_log (user_id);
+        CREATE INDEX IF NOT EXISTS idx_auth_audit_created ON auth_audit_log (created_at);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    logger.info("Auth tables (users, auth_audit_log) created/verified")
+        except Exception as e:
+            logger.error(f"Failed to init auth tables: {e}")
+
+    @staticmethod
+    def auth_tables_exist() -> bool:
+        """Return True if users and auth_audit_log tables exist in the database."""
+        sql = """
+        SELECT COUNT(*) AS n
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('users', 'auth_audit_log');
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql)
+                    row = cursor.fetchone()
+                    return row and row.get("n") == 2
+        except Exception as e:
+            logger.error(f"Auth tables check failed: {e}")
+            return False
+
+    @staticmethod
+    def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+        """Return user row by email or None."""
+        sql = "SELECT id, user_id, full_name, email, hashed_password, is_locked, lock_until, failed_login_attempts FROM users WHERE email = %s;"
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, (email.strip().lower(),))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"get_user_by_email failed: {e}")
+            return None
+
+    @staticmethod
+    def create_user(full_name: str, email: str, hashed_password: str) -> Optional[Dict[str, Any]]:
+        """Insert user; return dict with id and user_id (UUID) or None on duplicate/error."""
+        sql = """
+        INSERT INTO users (full_name, email, hashed_password)
+        VALUES (%s, %s, %s)
+        RETURNING id, user_id;
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, (full_name.strip(), email.strip().lower(), hashed_password))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"create_user failed: {e}")
+            raise
+
+    @staticmethod
+    def update_login_success(user_id: int) -> None:
+        """Reset failed_login_attempts and lock_until after successful login."""
+        sql = """
+        UPDATE users SET failed_login_attempts = 0, is_locked = FALSE, lock_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = %s;
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (user_id,))
+        except Exception as e:
+            logger.error(f"update_login_success failed: {e}")
+
+    @staticmethod
+    def update_login_failure(user_id: int, lock_until: Optional[datetime] = None) -> bool:
+        """Increment failed_login_attempts; if lock_until set, set lock. Returns True if account is now locked."""
+        if lock_until is not None:
+            sql = """
+            UPDATE users SET failed_login_attempts = 5, is_locked = TRUE, lock_until = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s;
+            """
+            try:
+                with get_db_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(sql, (lock_until, user_id))
+                return True
+            except Exception as e:
+                logger.error(f"update_login_failure (lock) failed: {e}")
+                return False
+        sql = """
+        UPDATE users SET failed_login_attempts = failed_login_attempts + 1, updated_at = CURRENT_TIMESTAMP WHERE id = %s;
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (user_id,))
+            return False
+        except Exception as e:
+            logger.error(f"update_login_failure failed: {e}")
+            return False
+
+    @staticmethod
+    def log_auth_audit(user_id: Optional[int], email: Optional[str], event_type: str, details: Optional[Dict] = None) -> None:
+        """Insert into auth_audit_log."""
+        sql = "INSERT INTO auth_audit_log (user_id, email, event_type, details) VALUES (%s, %s, %s, %s);"
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (user_id, email, event_type, json.dumps(details or {})))
+        except Exception as e:
+            logger.error(f"log_auth_audit failed: {e}")
+
+    # ─── Chat History (existing schema: session_id, user_id, role, content) ──────
+
+    @staticmethod
+    def init_chat_history_table():
+        """Ensure chat_history table exists (same schema as setupChatHistory.sql)."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id SERIAL PRIMARY KEY,
+            session_id VARCHAR(255) NOT NULL,
+            user_id VARCHAR(255),
+            role VARCHAR(20) NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_history_session ON chat_history (session_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history (user_id);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    logger.info("Chat history table created/verified")
+        except Exception as e:
+            logger.error(f"Failed to init chat_history table: {e}")
+
+    @staticmethod
+    def get_chat_history(session_id: str, user_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return chat history for a session (thread). Optionally scope by user_id. Format: [{role, text}, ...]."""
+        if user_id:
+            sql = """
+            SELECT role, content FROM chat_history
+            WHERE session_id = %s AND (user_id IS NULL OR user_id = %s)
+            ORDER BY created_at ASC LIMIT %s;
+            """
+            params = (session_id, str(user_id), limit)
+        else:
+            sql = """
+            SELECT role, content FROM chat_history
+            WHERE session_id = %s
+            ORDER BY created_at ASC LIMIT %s;
+            """
+            params = (session_id, limit)
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+                    return [{"role": r["role"], "text": r["content"]} for r in rows]
+        except Exception as e:
+            logger.error(f"get_chat_history failed: {e}")
+            return []
+
+    @staticmethod
+    def insert_chat_message(session_id: str, user_id: Optional[str], role: str, content: str) -> None:
+        """Insert one message into chat_history. role must be 'user' or 'assistant'."""
+        if role not in ("user", "assistant"):
+            logger.warning(f"insert_chat_message: invalid role {role}, skipping")
+            return
+        sql = """
+        INSERT INTO chat_history (session_id, user_id, role, content)
+        VALUES (%s, %s, %s, %s);
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, (session_id, str(user_id) if user_id else None, role, content or ""))
+        except Exception as e:
+            logger.error(f"insert_chat_message failed: {e}")
+
     # ─── Query Analytics ──────────────────────────────────────────────────────
 
     @staticmethod
@@ -794,8 +1070,13 @@ class VectorQueries:
                             if val is not None and not isinstance(val, (int, float, str, bool)):
                                 result[key] = float(val)
                         result["period_hours"] = hours
+                        # Add feedback counts (all-time)
+                        feedback = VectorQueries.get_feedback_summary()
+                        result.update(feedback)
                         return result
-                    return {"total_queries": 0, "period_hours": hours}
+                    out = {"total_queries": 0, "period_hours": hours}
+                    out.update(VectorQueries.get_feedback_summary())
+                    return out
         except Exception as e:
             logger.error(f"Failed to get analytics summary: {e}")
             return {"error": str(e), "period_hours": hours}
