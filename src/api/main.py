@@ -735,6 +735,29 @@ async def feedback_endpoint(
 
 
 @app.get(
+    f"{settings.API_PREFIX}/chat/threads",
+    tags=["Chat"],
+)
+async def list_chat_threads_endpoint(
+    user: Dict[str, Any] = Depends(get_current_user),
+    limit: int = 50,
+):
+    """List the current user's chat threads (conversations). JWT required. Returns thread_id, updated_at, preview."""
+    user_id = user.get("sub") or user.get("id") or user.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload: missing user identifier",
+        )
+    threads = await run_in_threadpool(
+        VectorQueries.list_chat_threads,
+        str(user_id),
+        min(limit, 100),
+    )
+    return {"threads": threads}
+
+
+@app.get(
     f"{settings.API_PREFIX}/chat/history",
     tags=["Chat"],
 )

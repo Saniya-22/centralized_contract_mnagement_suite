@@ -34,6 +34,9 @@ class GovGigState(MessagesState):
     query_intent: Optional[str]        # QueryIntent enum value (str)
     detected_clause_ref: Optional[str] # e.g. "FAR 52.236-2" — skips tool-selector LLM
     detected_reg_type: Optional[str]   # e.g. "FAR", "DFARS", "EM385"
+    is_procedural: Optional[bool]       # steps / what to do (from classifier)
+    is_contract_co: Optional[bool]      # frequency/schedule → contract/CO (from classifier)
+    is_document_request: Optional[bool]  # draft/write/generate doc → guidance only (from classifier)
     agent_path: Annotated[List[str], operator.add]  # Track agent execution path
     
     # Chain-of-Thought

@@ -20,6 +20,15 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# Section title substrings that indicate matrix/meta content to exclude from retrieval
+META_SECTION_TITLE_SUBSTRINGS = (
+    "matrix",
+    "appendix",
+    "solicitation provisions and contract clauses",
+    "key:",
+    "matrix notes",
+)
+
 
 class VectorQueries:
     """Database queries for vector operations."""
@@ -245,6 +254,25 @@ class VectorQueries:
         logger.info(f"RRF fused {len(fused)} unique chunks")
         return fused
 
+    @staticmethod
+    def _is_meta_chunk(chunk: Dict[str, Any]) -> bool:
+        """True if chunk is matrix/meta content (Matrix Notes, Appendix, etc.) to exclude from retrieval."""
+        meta = chunk.get("metadata") or {}
+        title = (meta.get("section_title") or "").lower()
+        if any(sub in title for sub in META_SECTION_TITLE_SUBSTRINGS):
+            return True
+        # Fallback: check text snippet for matrix-style headers
+        text = (chunk.get("text") or chunk.get("content") or "")[:300].lower()
+        if "matrix notes" in text and ("key:" in text or "provision or clause" in text):
+            return True
+        return False
+
+    @staticmethod
+    def _section_number(chunk: Dict[str, Any]) -> Optional[str]:
+        """Extract section_number (e.g. 52.211-10) from chunk metadata for boosting."""
+        meta = chunk.get("metadata") or {}
+        return meta.get("section_number") or meta.get("part") or None
+
     # ─── Hybrid Search (public API used by VectorSearchTool) ─────────────────
 
     @staticmethod
@@ -254,23 +282,28 @@ class VectorQueries:
         k: int = None,
         regulation_type: Optional[str] = None,
         namespace: str = settings.REGULATIONS_NAMESPACE,
+        exclude_meta_sections: bool = True,
+        preferred_section_prefixes: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Run dense + FTS searches in parallel and merge with RRF.
 
-        This replaces the old weighted-sum hybrid with the superior RRF approach
-        used by the JS rag.service.js.
+        Optionally excludes matrix/meta chunks and boosts operational clause numbers
+        (e.g. for mobilization / clauses-to-review queries).
 
         Args:
             query_embedding: Dense embedding for vector search
             query_text: Raw text for FTS search
-            k: Candidates to retrieve from each search leg
+            k: Candidates to retrieve from each search leg (final count returned)
             regulation_type: Optional filter ('FAR', 'DFARS', 'EM385')
             namespace: DB namespace
+            exclude_meta_sections: If True, filter out Matrix/Appendix/meta chunks
+            preferred_section_prefixes: Optional list of clause prefixes to boost (e.g. 52.211, 52.232)
 
         Returns:
-            RRF-merged list sorted by rrf_score, with final_score alias for compat
+            RRF-merged list sorted by score, with final_score alias for compat
         """
         k = k or settings.DENSE_TOP_K
+        k_retrieve = k * 2 if exclude_meta_sections else k  # overfetch so filtering leaves enough
 
         import concurrent.futures
 
@@ -280,11 +313,11 @@ class VectorQueries:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future_dense = executor.submit(
                 VectorQueries.dense_search,
-                query_embedding, k=k, regulation_type=regulation_type, namespace=namespace
+                query_embedding, k=k_retrieve, regulation_type=regulation_type, namespace=namespace
             )
             future_fts = executor.submit(
                 VectorQueries.fts_search,
-                query_text, k=k, regulation_type=regulation_type, namespace=namespace
+                query_text, k=k_retrieve, regulation_type=regulation_type, namespace=namespace
             )
 
             try:
@@ -299,13 +332,21 @@ class VectorQueries:
 
         fused = VectorQueries._reciprocal_rank_fusion(dense_chunks, fts_chunks)
 
-        # Alias rrf_score → final_score so VectorSearchTool keeps working
+        if exclude_meta_sections:
+            fused = [doc for doc in fused if not VectorQueries._is_meta_chunk(doc)]
+            logger.info(f"After meta filter: {len(fused)} chunks")
+
+        # Alias rrf_score → final_score; optionally boost preferred clause prefixes
         for doc in fused:
             doc["final_score"] = doc["rrf_score"]
-            # Expose source_file and content fields that older code expects
             doc.setdefault("content", doc.get("text", ""))
             doc.setdefault("source_file", doc.get("metadata", {}).get("source", ""))
+            if preferred_section_prefixes:
+                sn = VectorQueries._section_number(doc)
+                if sn and any(sn.startswith(prefix) for prefix in preferred_section_prefixes):
+                    doc["final_score"] = doc["rrf_score"] * 1.4  # boost operational clauses
 
+        fused.sort(key=lambda x: x["final_score"], reverse=True)
         return fused[:k]
 
     # ─── Direct Clause Text Lookup ────────────────────────────────────────────
@@ -934,6 +975,49 @@ class VectorQueries:
                     cursor.execute(sql, (session_id, str(user_id) if user_id else None, role, content or ""))
         except Exception as e:
             logger.error(f"insert_chat_message failed: {e}")
+
+    @staticmethod
+    def list_chat_threads(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """List threads (conversations) for a user. Returns thread_id, updated_at, preview (first user message, truncated)."""
+        sql = """
+        SELECT
+            t.session_id,
+            t.updated_at,
+            (
+                SELECT LEFT(h2.content, 80)
+                FROM chat_history h2
+                WHERE h2.session_id = t.session_id
+                  AND (h2.user_id IS NULL OR h2.user_id = %s)
+                  AND h2.role = 'user'
+                ORDER BY h2.created_at ASC
+                LIMIT 1
+            ) AS preview
+        FROM (
+            SELECT session_id, MAX(created_at) AS updated_at
+            FROM chat_history
+            WHERE user_id IS NULL OR user_id = %s
+            GROUP BY session_id
+        ) t
+        ORDER BY t.updated_at DESC
+        LIMIT %s;
+        """
+        params = (str(user_id), str(user_id), limit)
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+                    return [
+                        {
+                            "thread_id": r["session_id"],
+                            "updated_at": r["updated_at"].isoformat() if hasattr(r["updated_at"], "isoformat") else str(r["updated_at"]),
+                            "preview": (r["preview"] or "").strip() or None,
+                        }
+                        for r in rows
+                    ]
+        except Exception as e:
+            logger.error(f"list_chat_threads failed: {e}")
+            return []
 
     # ─── Query Analytics ──────────────────────────────────────────────────────
 

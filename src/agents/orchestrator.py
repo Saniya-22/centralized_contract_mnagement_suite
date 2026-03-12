@@ -171,6 +171,17 @@ class GovGigOrchestrator:
             or citation_coverage < 0.45
             or quality_score < 0.55
         )
+        # Don't over-apply: high evidence = trust the answer, avoid notice
+        if evidence_avg >= 0.80:
+            low_confidence = False
+        elif evidence_avg >= 0.75:
+            # At 0.75+ evidence, skip notice (quality_score can be borderline)
+            low_confidence = False
+        elif is_clause_lookup and evidence.get("doc_count", 0) >= 1 and evidence_avg >= 0.70:
+            low_confidence = False
+        elif evidence_avg >= 0.70 and citation_coverage >= 0.80:
+            # Strong citations + solid evidence: skip notice (e.g. CPARS appeal, procedural)
+            low_confidence = False
 
         return {
             "citation_coverage": round(citation_coverage, 4),
@@ -269,9 +280,13 @@ class GovGigOrchestrator:
             "query_intent":        intent.value,
             "detected_clause_ref": classification.clause_reference,
             "detected_reg_type":   classification.regulation_type,
+            "is_procedural":        classification.is_procedural,
+            "is_contract_co":       classification.is_contract_co,
+            "is_document_request":  classification.is_document_request,
             "agent_path": [
                 f"Router: intent={intent.value} conf={classification.confidence:.2f} "
                 + (f"ref='{classification.clause_reference}' " if classification.clause_reference else "")
+                + (f" proc={classification.is_procedural} co={classification.is_contract_co} doc={classification.is_document_request} " if (classification.is_procedural or classification.is_contract_co or classification.is_document_request) else "")
                 + f"→ {next_agent}"
             ],
         }
@@ -322,6 +337,13 @@ class GovGigOrchestrator:
             offsets = state.get("run_offsets") or {}
             start_idx = int(offsets.get("retrieved_documents", 0) or 0)
             documents = all_documents[start_idx:] if start_idx > 0 else all_documents
+
+            # Treat retrieval failures as no documents (vector_search returns error dicts on failure)
+            raw_count = len(documents)
+            documents = [d for d in documents if not d.get("error")]
+            if raw_count and not documents:
+                new_agent_path.append("Synthesizer: Retrieved docs contained errors — treating as no documents")
+
             new_agent_path.append(
                 f"Synthesizer: Processing {len(documents)} retrieved documents"
             )
@@ -350,7 +372,7 @@ class GovGigOrchestrator:
             )
 
             formatted_docs = format_documents(documents, max_tokens=settings.RAG_TOKEN_LIMIT)
-            system_prompt   = get_synthesizer_prompt(state, documents)
+            system_prompt   = get_synthesizer_prompt(state, documents, evidence_summary=evidence)
 
             user_message = (
                 f"Retrieved Documents:\n{formatted_docs}\n\n"
@@ -365,6 +387,14 @@ class GovGigOrchestrator:
             response = self.synthesizer_llm.invoke(messages, config={"tags": ["synthesizer_token"]})
             quality_metrics = self._assess_answer_quality(response.content, documents, evidence, state)
             final_response = response.content
+            # For procedural queries, ensure "Key Requirements" is replaced with "Recommended steps"
+            if state.get("is_procedural", False) and "**Key Requirements**" in final_response and re.search(r"1\.\s+\*\*", final_response):
+                final_response = re.sub(
+                    r"\*\*Key Requirements\*\*:?\s*",
+                    "**Recommended steps:** ",
+                    final_response,
+                    count=1,
+                )
             hard_block_applied = False
 
             guard_verdict = self.sovereign_guard.evaluate_response(
@@ -493,6 +523,9 @@ class GovGigOrchestrator:
             "query_intent": None,
             "detected_clause_ref": None,
             "detected_reg_type": None,
+            "is_procedural": None,
+            "is_contract_co": None,
+            "is_document_request": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
@@ -585,6 +618,9 @@ class GovGigOrchestrator:
             "query_intent": None,
             "detected_clause_ref": None,
             "detected_reg_type": None,
+            "is_procedural": None,
+            "is_contract_co": None,
+            "is_document_request": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
@@ -598,6 +634,7 @@ class GovGigOrchestrator:
         }
         
         accumulated_docs = []
+        accumulated_response = ""
         final_complete_data = None
         
         try:
@@ -624,8 +661,10 @@ class GovGigOrchestrator:
                         if not docs_to_send:
                             docs_to_send = accumulated_docs
 
+                        # Ensure response is never empty: use state first, then streamed tokens (for DB persist & UI)
+                        response_text = final_state.get('generated_response') or accumulated_response or ""
                         final_complete_data = {
-                            "response": final_state.get('generated_response'),
+                            "response": response_text,
                             "documents": docs_to_send,
                             "confidence": final_state.get('confidence_score'),
                             "quality_metrics": final_state.get('quality_metrics'),
@@ -645,6 +684,7 @@ class GovGigOrchestrator:
                     if "synthesizer_token" in tags:
                         content = event["data"]["chunk"].content
                         if content:
+                            accumulated_response += content
                             yield {
                                 "type": "token",
                                 "data": content
@@ -703,6 +743,9 @@ class GovGigOrchestrator:
             "query_intent": None,
             "detected_clause_ref": None,
             "detected_reg_type": None,
+            "is_procedural": None,
+            "is_contract_co": None,
+            "is_document_request": None,
 
             "retrieved_documents": [],
             "tool_calls": [],

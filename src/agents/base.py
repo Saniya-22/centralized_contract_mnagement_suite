@@ -82,7 +82,7 @@ class BaseAgent(ABC):
         
         for msg in state.get("chat_history", []):
             role = msg.get("role")
-            content = msg.get("content")
+            content = msg.get("content") or msg.get("text") or ""
             
             if role == "user":
                 messages.append(HumanMessage(content=content))

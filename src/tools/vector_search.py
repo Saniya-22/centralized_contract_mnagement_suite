@@ -53,6 +53,14 @@ class VectorSearchInput(BaseModel):
         default="hybrid",
         description="'hybrid' uses dense+FTS+RRF (recommended), 'dense' uses vector only"
     )
+    exclude_meta_sections: bool = Field(
+        default=True,
+        description="Exclude matrix/notes/appendix meta chunks from results (recommended)"
+    )
+    preferred_section_prefixes: Optional[List[str]] = Field(
+        default=None,
+        description="Optional clause number prefixes to boost (e.g. 52.211, 52.232 for mobilization)"
+    )
 
 
 class ClauseReferenceInput(BaseModel):
@@ -77,6 +85,8 @@ class VectorSearchTool:
         k: int = 10,
         regulation_type: Optional[str] = None,
         search_mode: str = "hybrid",
+        exclude_meta_sections: bool = True,
+        preferred_section_prefixes: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Search regulatory documents (FAR, DFARS, EM385) using advanced hybrid retrieval.
 
@@ -108,6 +118,8 @@ class VectorSearchTool:
                     query_text=query,
                     k=k,
                     regulation_type=regulation_type,
+                    exclude_meta_sections=exclude_meta_sections,
+                    preferred_section_prefixes=preferred_section_prefixes,
                 )
             else:
                 fused = VectorQueries.dense_search(

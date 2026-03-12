@@ -143,6 +143,38 @@ _REGULATION_KEYWORDS: tuple[str, ...] = (
     "standard", "subpart", "title",
     # FAR-specific topic anchors
     "buy american", "domestic preference", "country of origin", "trade agreements act",
+    # Construction / contract admin long-tail (reduce over-refusal)
+    "rea", "request for equitable adjustment", "equitable adjustment",
+    "change order", "change orders",
+    "cpars", "past performance", "debrief", "debriefing",
+    "daily rate", "field office overhead", "overhead",
+    "certify", "certification", "rea certification",
+    "novation", "novation agreement",
+    "withhold", "withholding", "withholdings",
+    "termination for default", "termination for convenience",
+    "product substitution", "product variance", "substitution", "variance",
+    "mobilization", "mobilisation", "post award", "post-award",
+    "compensable delay", "concurrent delay", "excusable delay", "delay letter",
+    "serial letter", "structure the serial letter", "ko letter",
+    "differing site conditions", "differing site condition", "site conditions",
+    "duct bank", "gas line", "oil tank", "unexploded ordnance", "uxo",
+    "wildfire", "fire at site", "fire overnight", "stop-work",
+    "qc checklist", "quality checklist", "qc plan", "qc program", "qcm", "quality control manager",
+    "conduit", "masonry", "demolition", "phase inspection", "inspection report",
+    "submittal", "submittals", "rfi", "rfis",
+    "hot work", "hot work permit",
+    "redline", "redline drawing", "as-built", "as built",
+    "superintendent", "drawing", "drawings", "update drawing",
+    "limited rights", "government purpose rights", "unlimited rights", "data rights",
+    "scope", "solicitation", "scope of work", "scope alignment",
+    "dispute", "disputes", "appeal", "disagreement",
+    "bonding", "performance bond", "payment bond",
+    "contracting officer representative", "cor", "contracting officer",
+    "daily report", "daily reports",
+    "prime", "prime contractor", "subcontractor payment", "paying",
+    "siop", "ppi", "pre-purchase inspection", "pre purchase inspection",
+    "insurance", "insurance requirements",
+    "small business set-aside", "set aside", "set-aside",
 )
 
 def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
@@ -166,6 +198,66 @@ _DOMAIN_HINT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # FAR Part 25 topic hint when acronym is omitted.
     (re.compile(r"\bbuy\s+american\b", re.IGNORECASE), "FAR"),
 )
+
+
+# ── Procedural / contract-CO flags (single source of truth for pipeline) ───────
+
+_PROCEDURAL_TRIGGERS: tuple[str, ...] = (
+    "what do i do", "what do we do", "what should i do", "what can i do",
+    "next steps", "how do i", "how do you", "how should i",
+    "can i get reimbursed", "get reimbursed", "reimbursed for",
+    "what documents do i need", "what documents must", "what should i verify",
+    "write a letter", "draft a letter", "draft me", "write me an",
+    "notify the", "notify the ko", "notify the contracting",
+    "appeal", "how do you appeal",
+    "first 10 steps", "first 5 steps", "provide the first",
+    "encountered", "discovered", "ran into", "uncovered", "we have discovered",
+    "fire overnight", "fire at the site", "fire at site",
+    "what does the government need", "what does the govt need",
+    "request for equitable", "submit an rea", "submit a rea",
+    "structure the serial letter", "how should i structure",
+    "what do i do next", "what do we do if",
+    "disagreement", "do not agree", "dispute",
+)
+
+_CONTRACT_CO_TRIGGERS: tuple[str, ...] = (
+    "how often", "how frequently", "when do i submit", "when do i send",
+    "daily report", "daily reports", "frequency of report", "reporting frequency",
+    "schedule of report", "when are reports due", "how many times",
+)
+
+_DOCUMENT_REQUEST_TRIGGERS: tuple[str, ...] = (
+    "write me a", "write me an", "draft me a", "draft me an", "draft a ", "write a ",
+    "generate a ", "generate me a ", "create a ", "prepare a ",
+    "serial letter", "write the ko", "write a letter", "draft a letter",
+    "draft an rea", "write an rea", "request for equitable", "rea for ",
+    "rfi ", "write an rfi", "draft an rfi", "generate a form", "generate a checklist",
+    "stop-work order", "inspection report", "phase inspection",
+)
+
+
+def is_procedural_query(query: str | None) -> bool:
+    """True if the query asks for steps / what to do. Single source of truth for pipeline."""
+    if not query or not query.strip():
+        return False
+    q = query.strip().lower()
+    return any(t in q for t in _PROCEDURAL_TRIGGERS)
+
+
+def is_contract_co_query(query: str | None) -> bool:
+    """True if the query is about frequency/schedule often specified in contract/CO. Single source of truth."""
+    if not query or not query.strip():
+        return False
+    q = query.strip().lower()
+    return any(t in q for t in _CONTRACT_CO_TRIGGERS)
+
+
+def is_document_request_query(query: str | None) -> bool:
+    """True if the query asks to draft/generate a document (letter, REA, form). We give guidance, not full draft."""
+    if not query or not query.strip():
+        return False
+    q = query.strip().lower()
+    return any(t in q for t in _DOCUMENT_REQUEST_TRIGGERS)
 
 
 # ── Source normalisation ───────────────────────────────────────────────────────
@@ -226,6 +318,10 @@ class ClassificationResult:
     clause_number:    Optional[str]     = None   # e.g. "52.236-2"
     regulation_type:  Optional[str]     = None   # coerced source label
     matched_keywords: list[str]         = field(default_factory=list)
+    # Pipeline flags: set for in-scope queries so retrieval/synthesis use one source of truth
+    is_procedural:       bool            = False  # steps / what to do
+    is_contract_co:      bool            = False  # frequency/schedule → contract/CO
+    is_document_request: bool            = False  # draft/write/generate document → guidance only
 
     @property
     def is_clause_lookup(self) -> bool:
@@ -269,6 +365,27 @@ def _cosine_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
     denom = np.linalg.norm(v1) * np.linalg.norm(v2)
     if denom == 0: return 0.0
     return float(np.dot(v1, v2) / denom)
+
+
+# ── Out-of-scope product/feature patterns (before keyword match) ───────────────
+# Queries about the product/system, not FAR/DFARS/EM385 — refuse early.
+_OUT_OF_SCOPE_SYSTEM_PATTERNS: tuple[str, ...] = (
+    "document generator",
+    "process guidance agent",
+    "why can't i access",
+    "is the document generator",
+    "when will the document generator",
+    "why is the document generator",
+    "access the process guidance",
+)
+
+
+def _is_system_or_product_query(query: str) -> bool:
+    """True if the query is about the product/feature, not regulations."""
+    if not query or not query.strip():
+        return False
+    q = query.strip().lower()
+    return any(p in q for p in _OUT_OF_SCOPE_SYSTEM_PATTERNS)
 
 
 # ── Waterfall Layers ─────────────────────────────────────────────────────────
@@ -334,6 +451,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
         return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
 
     normalised = _normalize_query(query)
+    proc = is_procedural_query(normalised)
+    co   = is_contract_co_query(normalised)
+    doc  = is_document_request_query(normalised)
 
     # ── 0. Cache Check ───────────────────────────────────────────────────────────
     if normalised in _ASYNC_CACHE:
@@ -353,7 +473,16 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             clause_source    = source,
             clause_number    = clause_num,
             regulation_type  = source,
+            is_procedural       = proc,
+            is_contract_co      = co,
+            is_document_request = doc,
         )
+        _ASYNC_CACHE[normalised] = res
+        return res
+
+    # ── 1.5. Out-of-scope: product/system queries (not regulations) ──────────────
+    if _is_system_or_product_query(normalised):
+        res = ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
         _ASYNC_CACHE[normalised] = res
         return res
 
@@ -365,6 +494,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             intent          = QueryIntent.REGULATION_SEARCH,
             confidence      = 0.8,
             regulation_type = source,
+            is_procedural       = proc,
+            is_contract_co      = co,
+            is_document_request = doc,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -381,6 +513,35 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             confidence       = 0.6,
             matched_keywords = matched_kws,
             regulation_type  = _infer_regulation_hint(normalised),
+            is_procedural       = proc,
+            is_contract_co      = co,
+            is_document_request = doc,
+        )
+        _ASYNC_CACHE[normalised] = res
+        return res
+
+    # ── 3.5. Question frame + acquisition/construction hook (0.55) ─────────────────
+    # Catches "What is X?", "How do I X?", "If I have X can I...?" when X is contract-related.
+    # Robust: one layer for in-scope boundary; no per-query trigger lists.
+    _question_start = re.compile(
+        r"^(what|how|when|where|why|can|should|do i|do we|does the|did the|is there|are there|if\s+i\s|if\s+we\s)\b",
+        re.IGNORECASE,
+    )
+    _acquisition_hook = re.compile(
+        r"\b(contract|contractor|government|ko|far|dfars|em\s*385|clause|requirement|"
+        r"schedule|payment|invoice|award|modification|order|letter|report|document|"
+        r"delay|cost|price|bond|subcontract|prime|specification|specifications|drawing|"
+        r"compensable|concurrent|vendor)\b",
+        re.IGNORECASE,
+    )
+    if _question_start.search(normalised) and _acquisition_hook.search(normalised):
+        res = ClassificationResult(
+            intent          = QueryIntent.REGULATION_SEARCH,
+            confidence      = 0.55,
+            regulation_type = _infer_regulation_hint(normalised),
+            is_procedural       = proc,
+            is_contract_co      = co,
+            is_document_request = doc,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -389,8 +550,11 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
     sem_intent, sem_conf = await _get_semantic_intent(normalised)
     if sem_intent == QueryIntent.REGULATION_SEARCH:
         res = ClassificationResult(
-            intent     = QueryIntent.REGULATION_SEARCH,
-            confidence = sem_conf,
+            intent         = QueryIntent.REGULATION_SEARCH,
+            confidence    = sem_conf,
+            is_procedural       = proc,
+            is_contract_co      = co,
+            is_document_request = doc,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -419,6 +583,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
                 clause_source    = norm_source,
                 clause_number    = num,
                 regulation_type  = norm_source,
+                is_procedural       = proc,
+                is_contract_co      = co,
+                is_document_request = doc,
             )
             _ASYNC_CACHE[normalised] = res
             return res

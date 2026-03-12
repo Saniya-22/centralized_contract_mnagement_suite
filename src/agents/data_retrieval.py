@@ -34,6 +34,38 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+# FAR clause prefixes to boost for mobilization / "clauses to review" queries
+MOBILIZATION_CLAUSE_PREFIXES = [
+    "52.211",   # commencement / delivery
+    "52.232",   # payments
+    "52.236",   # construction
+    "52.242",   # contract administration
+    "52.243",   # changes
+    "52.249",   # termination / default
+]
+
+
+def _preferred_clause_prefixes_for_query(query: str) -> Optional[List[str]]:
+    """If the query is about mobilization or clauses to review, return FAR clause prefixes to boost."""
+    if not query or not query.strip():
+        return None
+    q = query.lower().strip()
+    triggers = (
+        "mobilization",
+        "clauses to review",
+        "before project start",
+        "before mobilization",
+        "pre-mobilization",
+        "pre-award",
+        "which clauses",
+        "what clauses",
+        "key clauses",
+        "contract clauses to review",
+    )
+    if any(t in q for t in triggers):
+        return MOBILIZATION_CLAUSE_PREFIXES
+    return None
+
 
 class DataRetrievalAgent(BaseAgent):
     """Agent specialised in retrieving regulatory documents with ReflectionRAG."""
@@ -284,9 +316,13 @@ class DataRetrievalAgent(BaseAgent):
             "query": query,
             "k": settings.RETRIEVAL_TOP_K,
             "search_mode": "hybrid",
+            "exclude_meta_sections": True,
         }
         if regulation_type:
             tool_args["regulation_type"] = regulation_type
+        preferred = _preferred_clause_prefixes_for_query(query)
+        if preferred:
+            tool_args["preferred_section_prefixes"] = preferred
 
         results = self.vector_search_tool.search_regulations.invoke(tool_args)
 

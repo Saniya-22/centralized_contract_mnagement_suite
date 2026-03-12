@@ -1,0 +1,748 @@
+[1] path=other docs=0 confidence=None
+  Q: What bases are within Navy Region NW?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[2] path=other docs=0 confidence=None
+  Q: Who is the founder of govgig?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[3] path=other docs=0 confidence=None
+  Q: What did the GAO state on the status of the nation's four major naval shipyards?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[4] path=other docs=0 confidence=None
+  Q: Provide me with detailed history of Puget Sound naval shipyard
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[5] path=regulation_search docs=4 confidence=0.5499999999999999
+  Q: Core Federal Acquisition Regulations / FAR clauses / federal construction docume…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Buy American Act Compliance**: For construction contracts, the FAR clause 52.225-10 mandates that contractors must comply with the Buy Am…
+
+[6] path=clause_lookup docs=1 confidence=1.0
+  Q: Write the KO a serial about the shutdown, notifying them of potential impacts, i…
+  A: **Key Requirements:**
+- **Price Breakdown Submission**: Under DFARS 252.236-7000, the contractor must provide a detailed price breakdown with any proposal for a contract modification. This breakdown must include costs for materials, labor, equipment, subcontracts, and overhead (DFARS 252.236-7000(a)…
+
+[7] path=regulation_search docs=4 confidence=0.8098360655737705
+  Q: We are building a barracks project at camp Pendleton and have uncovered unexplod…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+
+- **Notification of Differing Site Conditions**: Under FAR 52.236-2, you must promptly notify the Contracting Officer (KO) in writing about …
+
+[8] path=other docs=0 confidence=None
+  Q: Is the document generator working yet?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[9] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: Why is the document generator still under construction?
+  A: **Key Requirements:**
+- The Electronic Data Access (EDA) system is the primary tool for the Department of Defense (DoD) for electronic distribution of contract documents. All contract attachments must be uploaded to EDA unless they are classified, sensitive, or cannot be converted to electronic form…
+
+[10] path=regulation_search docs=5 confidence=0.6252247488101533
+  Q: Write a serial letter notifying the ko of the wildfire impact
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Notify the Contracting Officer (KO) of any impacts from wildfires that may affect contract performance, including delays, resource availabi…
+
+[11] path=other docs=0 confidence=None
+  Q: What is INDOPACOM?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[12] path=other docs=0 confidence=None
+  Q: What does OCONUS mean?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[13] path=regulation_search docs=5 confidence=0.583954907540312
+  Q: How often should the superintendent update drawings?
+  A: **Key Requirements:**
+- The contractor is responsible for checking all drawings immediately upon receipt and must compare them for accuracy before proceeding with work (DFARS 252.236-7001(b)(1)-(2)).
+- Any discrepancies identified in the drawings must be promptly reported to the Contracting Officer …
+
+[14] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: What are redline drawings?
+  A: **Key Requirements:**
+- Redline drawings are typically used in construction and engineering projects to indicate changes or revisions made to the original drawings. They highlight modifications, corrections, or clarifications that need to be addressed (FAR 52.236-21).
+- These drawings serve as a com…
+
+[15] path=regulation_search docs=4 confidence=0.42500000000000004
+  Q: Review the FAR or DFARS clauses and identify risks related to construction sched…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Schedule Submission**: Under FAR 52.236-15, contractors must submit a detailed construction schedule within five days of work commencemen…
+
+[16] path=regulation_search docs=5 confidence=0.723954907540312
+  Q: What is a concurrent delay?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- A concurrent delay occurs when two or more delays impact the completion of a project simultaneously, with at least one delay being the faul…
+
+[17] path=regulation_search docs=5 confidence=0.6599999999999999
+  Q: As a Project Manager, analyze the far clause interpretation requirements during …
+  A: **Key Requirements:**
+- **Preaward Compliance Evaluation**: For contracts valued at $10 million or more, the contractor and first-tier subcontractors with anticipated subcontracts of $10 million or more must undergo a preaward compliance evaluation by the Office of Federal Contract Compliance Progra…
+
+[18] path=regulation_search docs=5 confidence=0.41999999999999993
+  Q: As a Project Manager, analyze the contract compliance requirements during the pr…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+
+- **Hazardous Energy Control Procedures**: Before initiating Hazardous Energy Control Procedures (HECP), the prime contractor must have thes…
+
+[19] path=regulation_search docs=5 confidence=0.44000000000000006
+  Q: As a Project Manager, analyze the commissioning requirements during the pre-awar…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Hazardous Energy Control Procedures (HECP)**: Before initiating any work involving hazardous energy, the contractor must have their Hazar…
+
+[20] path=regulation_search docs=5 confidence=0.41999999999999993
+  Q: As a Project Manager, analyze the punchlist requirements during the pre-award ph…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Subcontracting Plans**: Ensure that any subcontracting plan submitted includes all required elements and positive goals. If a plan lacks …
+
+[21] path=regulation_search docs=5 confidence=0.6599999999999999
+  Q: As a Project Manager, analyze the warranties requirements during the pre-award p…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Contractors must provide detailed warranty information for each warranted item in the “Warranty Tracking Information” attachment at the tim…
+
+[22] path=regulation_search docs=5 confidence=0.58
+  Q: As a Project Manager, analyze the inspections requirements during the pre-award …
+  A: **Key Requirements:**
+- **Inspection System**: Contractors must establish and maintain an adequate inspection system to ensure compliance with contract requirements, as outlined in FAR 52.246-12. This includes performing inspections and maintaining complete records available for government review (F…
+
+[23] path=regulation_search docs=5 confidence=0.54
+  Q: As a Project Manager, analyze the differing site conditions requirements during …
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Differing Site Conditions Clause**: Under FAR 52.236-2, contractors must be aware that if they encounter subsurface or latent physical co…
+
+[24] path=regulation_search docs=5 confidence=0.5000000000000001
+  Q: As a Project Manager, analyze the delays requirements during the pre-award phase…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Delay Assessment**: The Contracting Officer is responsible for determining the facts and extent of any delays. If justified, they may ext…
+
+[25] path=clause_lookup docs=1 confidence=1.0
+  Q: Add DFARS clause 252.236-7000 into the letter.
+  A: **Key Requirements:**
+- Contractors must provide a detailed price breakdown with any proposal for a contract modification, as specified by the Contracting Officer (DFARS 252.236-7000(a)).
+- The breakdown must include detailed costs for materials, labor, equipment, subcontracts, overhead, and any oth…
+
+[26] path=regulation_search docs=5 confidence=0.68
+  Q: Write a delay letter to Navfac regarding an outage disapproval and the delay, in…
+  A: **Key Requirements:**
+- Include the FAR clause 52.242-17, Government Delay of Work, which states that if the performance of work is delayed by an act of the Contracting Officer or their failure to act, an adjustment shall be made for any increase in costs and modifications to delivery dates (FAR 52.…
+
+[27] path=regulation_search docs=5 confidence=0.5
+  Q: As a Project Manager, analyze the pricing adjustments requirements during the pr…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Price Adjustments for Improper Activity**: Under FAR 52.203-10, if the government determines that illegal or improper activities occurred…
+
+[28] path=regulation_search docs=5 confidence=0.42000000000000004
+  Q: As a Project Manager, analyze the change orders requirements during the pre-awar…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Change Order Notification**: During the pre-award phase, solicitations must include a notice to offerors regarding the administration of …
+
+[29] path=regulation_search docs=5 confidence=0.38
+  Q: As a Project Manager, analyze the safety requirements during the pre-award phase…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Construction Safety Plans**: A Competent Person must prepare a Construction Safety and Phasing Plan (CSPP) and a Safety Plan Compliance D…
+
+[30] path=regulation_search docs=5 confidence=0.52
+  Q: What clauses are covered by the Christian Doctrine?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:
+- The Christian Doctrine implies that certain clauses are deemed to be included in government contracts by operation of law, even if not expl…
+
+[31] path=regulation_search docs=4 confidence=0.8130618720253835
+  Q: Why would a general contractor submit an REA and not a change order to the gover…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- A Request for Equitable Adjustment (REA) is typically submitted when a contractor seeks compensation for unforeseen circumstances or change…
+
+[32] path=regulation_search docs=5 confidence=0.6599999999999999
+  Q: Document use and possession per FAR for benefit occupancy.
+  A: **Key Requirements:**
+- The Government has the right to take possession of or use any completed or partially completed work prior to contract completion, provided the Contracting Officer gives the Contractor a list of remaining work items (FAR 52.236-11(a)).
+- The Contractor is not relieved of contr…
+
+[33] path=regulation_search docs=5 confidence=0.5639344262295082
+  Q: What is the difference between a change order and an REA?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Change Order**: A change order is a formal modification to a contract that alters the scope of work, cost, or schedule. It can be either …
+
+[34] path=regulation_search docs=4 confidence=0.475
+  Q: If there is a safety incident, what does the government need from the general co…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Incident Reporting**: The contractor must report any safety incidents to the government promptly, as required by EM 385-1-1, which mandat…
+
+[35] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: How do I calculate my daily rate?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- To calculate your daily rate for government contracts, consider your total annual salary or compensation and divide it by the number of wor…
+
+[36] path=regulation_search docs=4 confidence=0.7065309360126917
+  Q: What is allowable for Field Office Overhead?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Field Office Overhead (FOO) costs are generally allowable if they are reasonable, allocable, and necessary for the performance of the contr…
+
+[37] path=regulation_search docs=4 confidence=0.27499999999999997
+  Q: How often can a general contractor submit billing?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- A general contractor must submit billing within **45 days after the end of each quarter** of their fiscal year, starting from the quarter i…
+
+[38] path=regulation_search docs=5 confidence=0.683954907540312
+  Q: Can the government designate anyone as a contracting officer representative?
+  A: **Key Requirements:**
+- A Contracting Officer Representative (COR) must be appointed by a Contracting Officer and is responsible for monitoring the contractor's performance and ensuring compliance with contract terms (FAR 1.602-2).
+- The individual designated as a COR does not need to meet the same …
+
+[39] path=regulation_search docs=5 confidence=0.6626645849596668
+  Q: What dollar value do I need to certify my REA?
+  A: **Key Requirements:**
+- A contractor must certify a request for equitable adjustment (REA) when the total amount exceeds the simplified acquisition threshold, which is currently set at $250,000 (DFARS 243.204-71(a)).
+- For claims exceeding $100,000, the contractor must provide a certification statin…
+
+[40] path=regulation_search docs=5 confidence=0.6799999999999999
+  Q: If the government's contracting officer representative is not qualified, what ca…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- If a Contracting Officer Representative (COR) is deemed unqualified, the contractor should promptly notify the Contracting Officer of any i…
+
+[41] path=regulation_search docs=4 confidence=0.42500000000000004
+  Q: Can the contracting officer adjust the schedule?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- The Contracting Officer has the authority to adjust the schedule through written orders, particularly under the Changes clause (FAR 52.243-…
+
+[42] path=regulation_search docs=4 confidence=0.6614489687995769
+  Q: What counts as justification for the contracting officer to change the schedule?
+  A: **Key Requirements**:
+- A contracting officer may change the schedule if there is a potential or actual delay in performance, as advised by the contract administration office. This advice must be in writing, timely, and include a definite recommendation for action (FAR 42.1107).
+- Changes may also b…
+
+[43] path=regulation_search docs=4 confidence=0.8
+  Q: My prime isn't paying me. What can I do?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Contractual Obligations**: Review your subcontract to ensure compliance with payment terms. The prime contractor is obligated to pay subc…
+
+[44] path=regulation_search docs=5 confidence=0.883954907540312
+  Q: Draft a letter to the KO regarding 52.242-5 stating the prime contractor is not …
+  A: **Key Requirements:**
+- **FAR 52.242-5**: This clause, titled "Payments to Subcontractors," mandates that prime contractors must make timely payments to their subcontractors for satisfactory performance of their contracts. Failure to comply can lead to contract administration actions (FAR 52.242-5).…
+
+[45] path=regulation_search docs=5 confidence=0.43999999999999995
+  Q: What should I verify regarding bonding requirements after award?
+  A: **Key Requirements:**
+- **Performance and Payment Bonds**: For construction contracts exceeding the threshold of $150,000, you must provide performance and payment bonds, each equal to 100% of the original contract price (FAR 52.228-15).
+- **Bond Submission Timing**: Ensure that the bonds are submit…
+
+[46] path=regulation_search docs=5 confidence=0.8052452301209572
+  Q: How often do I need to send in daily reports?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Daily reports are not explicitly required under the FAR or DFARS for general contract performance; however, specific reporting requirements…
+
+[47] path=regulation_search docs=5 confidence=0.48
+  Q: During excavation I encountered a duct bank that wasn't on any government drawin…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Under FAR 52.216-26, if you incur additional costs due to unforeseen conditions (like the duct bank), you may seek reimbursement for allowa…
+
+[48] path=regulation_search docs=5 confidence=0.33999999999999997
+  Q: If the contracting officer and I do not agree on the legitimacy of a change orde…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- If there is a disagreement regarding a change order, the contractor should first refer to the **Disputes clause** (FAR 52.233-1) included i…
+
+[49] path=regulation_search docs=4 confidence=0.7000000000000001
+  Q: How do you appeal an unsatisfactory CPARS?
+  A: **Key Requirements**:
+- To appeal an unsatisfactory Contractor Performance Assessment Reporting System (CPARS) rating, you must submit a written notice of appeal to the contracting officer within 90 days of receiving the CPARS rating (DFARS 201-253(a)).
+- If the appeal is related to a claim of $100,…
+
+[50] path=regulation_search docs=4 confidence=0.811448968799577
+  Q: What is the difference between termination for default and termination for conve…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:
+- **Termination for Default**: This occurs when the contractor fails to perform as required, such as not making progress or not curing a spec…
+
+[51] path=regulation_search docs=5 confidence=0.5599999999999999
+  Q: What is the reasonable withholdings on an invoice?
+  A: **Key Requirements:**
+- Under FAR 52.232-9, if multiple clauses authorize withholding, the total amount withheld cannot exceed the highest amount permissible under any single clause at that time (FAR 52.232-9).
+- Withholdings related to wages, hours of employees, or those not specified in the contra…
+
+[52] path=regulation_search docs=4 confidence=0.9549180327868853
+  Q: What documents do I need for a novation agreement?
+  A: **Key Requirements:**
+- A novation agreement is required when a contractor transfers all its assets or the entire portion of the assets involved in performing a government contract to a third party (FAR 42.1204(a)).
+- The agreement must be executed to recognize the third party as the successor in in…
+
+[53] path=regulation_search docs=5 confidence=0.8052452301209572
+  Q: How do I confirm the contract scope aligns with the solicitation and award docum…
+  A: **Key Requirements:**
+- Review the scope of work outlined in the solicitation documents, ensuring it matches the contract's terms (FAR 36.303-1(a)(1)).
+- Verify that the evaluation factors used during the proposal phase align with the contract requirements, particularly focusing on technical qualifi…
+
+[54] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: What is the difference between product substitution and product variance?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Product Substitution**: This refers to the replacement of a specified product with another product that meets the same specifications and…
+
+[55] path=regulation_search docs=4 confidence=0.425
+  Q: I have received an offer to buy my company. What impact will that have on my gov…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Change of Ownership Notification**: Under FAR 52.215-22, if your company intends to sell, you must notify the contracting officer, especi…
+
+[56] path=regulation_search docs=5 confidence=0.7012903225806453
+  Q: What contract clauses should I review before project mobilization?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **FAR 52.211-10, Commencement, Prosecution, and Completion of Work**: This clause outlines the contractor's obligations regarding the timel…
+
+[57] path=regulation_search docs=5 confidence=0.5412903225806451
+  Q: Add additional information that the time and cost impacts are unknown at this ti…
+  A: **Key Requirements:**
+- When submitting proposals, contractors must disclose any known activities that could materially impact costs, including vendor quotations and changes in production methods (DFARS 201.253).
+- For cost impact calculations related to unilateral changes, all affected CAS-covered …
+
+[58] path=regulation_search docs=4 confidence=0.6500000000000001
+  Q: What is the difference between limited rights, government purpose rights, and un…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Limited Rights**: The Government can use, modify, reproduce, release, perform, display, or disclose technical data only within its own op…
+
+[59] path=regulation_search docs=4 confidence=0.7065309360126917
+  Q: Generate a government property tracking form
+  A: **Key Requirements:**
+- **Government Property Definition**: Government property includes contractor-acquired property and contractor inventory, which refers to property in the contractor's possession for which the Government holds title (FAR 45.101).
+- **Tracking Requirements**: Contractors must mai…
+
+[60] path=regulation_search docs=4 confidence=0.425
+  Q: What documents must I review immediately after federal construction contract awa…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Postaward Small Business Program Rerepresentation**: Review FAR clause 52.219-28 if your contract involves a merger or acquisition prior …
+
+[61] path=regulation_search docs=5 confidence=0.8400409626216078
+  Q: Draft me an REA for compensable delay
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Compensable Delay Justification**: To support a Request for Equitable Adjustment (REA) for compensable delay, you must demonstrate that t…
+
+[62] path=other docs=0 confidence=None
+  Q: If I have concurrent compensable and non-compensable days of delay, can I be pai…
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[63] path=regulation_search docs=5 confidence=0.6399999999999999
+  Q: What FAR clauses can be the basis of an REA?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **FAR Clause 52.216-7**: This clause pertains to "Allowable Cost and Payment" and is often cited in Requests for Equitable Adjustment (REA)…
+
+[64] path=regulation_search docs=5 confidence=0.7039549075403121
+  Q: What data do I need to support an REA?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:
+- **Documentation of Costs**: Provide detailed documentation of all incurred costs related to the request for equitable adjustment (REA), inc…
+
+[65] path=regulation_search docs=4 confidence=0.8130618720253835
+  Q: Can you recommend me a Government contracts attorney?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+I'm unable to provide recommendations for specific attorneys. However, I can guide you on how to find a qualified government contracts attorney.
+
+**Key Considerati…
+
+[66] path=other docs=0 confidence=None
+  Q: Export to a word document
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[67] path=regulation_search docs=4 confidence=0.8081438392384981
+  Q: I think the Government has messed up the small business set aside. What should I…
+  A: **Key Requirements:**
+- The Small Business Administration (SBA) mandates that contracting activities ensure a fair proportion of contracts are awarded to small businesses, with heads of contracting activities responsible for implementing these programs effectively (FAR 19.502-2).
+- Contractors must …
+
+[68] path=regulation_search docs=5 confidence=0.6265150713907985
+  Q: We were digging a footing and ran into an unexpected gas line that isnt on the d…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Activity Hazard Analysis (AHA)**: You must develop an AHA for excavation work, which includes identifying hazards associated with unexpec…
+
+[69] path=regulation_search docs=5 confidence=0.24
+  Q: Write me an RFI, in standard NAVFAC form, for this issue
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:  
+- Ensure compliance with FAR 52.253-1 regarding the use of computer-generated forms. Any data submitted must adhere to the prescribed forma…
+
+[70] path=regulation_search docs=5 confidence=0.5599999999999999
+  Q: Rephrase answer to include all applicable FAR/DFAR/and EM 385 requirements
+  A: **Key Requirements:**
+- **Reporting Requirements**: Contractors must comply with FAR 52.204-10 for reporting executive compensation and first-tier subcontract awards for contracts valued at or above $10 million (FAR 4.1403(a)). This applies to all contract types.
+- **Labor Standards**: FAR 52.222-41…
+
+[71] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: What are my rights as a contractor during a debrief?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Contractors have the right to request a debriefing after the award of a contract, particularly if they were not selected for award. This is…
+
+[72] path=regulation_search docs=4 confidence=0.425
+  Q: Generate a QC dashboard for project quality performance.
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:  
+- **Earned Value Management System (EVMS)**: Contractors must implement an EVMS compliant with EIA-748 standards. This is mandatory for con…
+
+[73] path=regulation_search docs=5 confidence=0.8452452301209572
+  Q: Night-shift lighting levels are below 50 foot-candles. Write the dual safety/qua…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Stop-Work Orders**: Under FAR 42.1303, a contracting officer may issue a stop-work order for any negotiated fixed-price or cost-reimburse…
+
+[74] path=regulation_search docs=5 confidence=0.723954907540312
+  Q: Generate a QC checklist for conduit installation.
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Material Inspection**: Ensure all conduit materials meet the specifications outlined in EM 385, including proper ratings for environmenta…
+
+[75] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: Generate a checklist for verifying masonry reinforcement placement.
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:  
+- **Material Specifications**: Ensure that all masonry reinforcement materials comply with project specifications, including type, size, an…
+
+[76] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: Generate a QC inspection checklist for demolition activities.
+  A: **Key Requirements:**
+- **General Inspections**: All vehicles and machinery must be inspected, tested, and maintained according to a scheduled maintenance program. This program must be managed by a Qualified Person (QP) (EM385 18-5.a(1)).
+- **Pre-Use Inspections**: Operators must check vehicles and …
+
+[77] path=regulation_search docs=4 confidence=0.42991803278688523
+  Q: Identify the quality-related deliverables required in Division 00 before constru…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Minimum Plan Requirements**: Prior to construction, several specific plans must be developed and approved, including:
+  - **Demolition Pl…
+
+[78] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: How should I structure the serial letter?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:  
+- When structuring a serial letter for government contracts, ensure it includes a unique item identifier (UII) that complies with DFARS sta…
+
+[79] path=regulation_search docs=5 confidence=0.6199999999999999
+  Q: What is DFARS?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- The Defense Federal Acquisition Regulation Supplement (DFARS) is codified under Chapter 2 of Title 48 of the Code of Federal Regulations an…
+
+[80] path=regulation_search docs=5 confidence=0.794051061386466
+  Q: What is SIOP?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- SIOP stands for "Single Integrated Operational Plan," which is a strategic plan used by the U.S. military for nuclear operations. It encomp…
+
+[81] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: What is a serial letter?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- A serial letter refers to a unique identifier assigned to an item, which differentiates it from other items. This identifier can be a combi…
+
+[82] path=regulation_search docs=5 confidence=0.8813947436898257
+  Q: Which FAR clause applies to differing site conditions?
+  A: **Key Requirements:**
+- The applicable FAR clause for differing site conditions is **FAR 52.236-2**, which mandates that contractors must notify the Contracting Officer in writing of any subsurface or latent physical conditions that differ materially from those indicated in the contract (FAR 52.236-…
+
+[83] path=regulation_search docs=5 confidence=0.5
+  Q: What is the FAR clause that relates to professional services?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- The primary FAR clause related to professional services is **FAR 52.237-3, Continuity of Services**. This clause is applicable to contracts…
+
+[84] path=regulation_search docs=5 confidence=0.8452452301209572
+  Q: Show me the standard project cost ranges for a government solicitation.
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- The magnitude of construction projects in government solicitations is categorized into specific cost ranges as follows:
+  - $10,000,000 to …
+
+[85] path=clause_lookup docs=1 confidence=1.0
+  Q: What is FAR 36.204?
+  A: **Key Requirements:**
+- FAR 36.204 mandates that advance notices and solicitations for construction projects must disclose the magnitude of the requirement in terms of physical characteristics and estimated price range, without revealing the Government’s estimate.
+- The estimated price must be categ…
+
+[86] path=regulation_search docs=5 confidence=0.7652247488101533
+  Q: What are the roles and responsibilities of a federal construction quality contro…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- The Quality Control Manager (QCM) is responsible for implementing and maintaining the quality control program on federal construction proje…
+
+[87] path=other docs=0 confidence=None
+  Q: What do we do if a vendor cannot match the specifications?
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[88] path=regulation_search docs=5 confidence=0.4
+  Q: As a Superintendent, analyze the inspections requirements during the claims & di…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Pre-Occupancy Inspections**: Contracts for construction or maintenance of facilities for DoD must include a pre-occupancy safety and habi…
+
+[89] path=regulation_search docs=4 confidence=0.425
+  Q: As a Superintendent, analyze the pricing adjustments requirements during the cla…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Construction Wage Rate Adjustments**: Under FAR 52.222-31, if a contract includes labor costs subject to the Construction Wage Rate Requi…
+
+[90] path=regulation_search docs=5 confidence=0.7
+  Q: When can the contracting officer not change the schedule?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Contracting officers cannot change the contract schedule when the contract includes a firm-fixed-price or fixed-price incentive fee arrange…
+
+[91] path=regulation_search docs=5 confidence=0.8400000000000001
+  Q: I was just issued a job as a project manager, post award, for a federal DBB cons…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+1. **Review Contract Documents**: Familiarize yourself with the contract terms, including specifications, drawings, and any clauses related t…
+
+[92] path=regulation_search docs=5 confidence=0.6
+  Q: How do I upload submittal documents?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- Submittal documents for DoD contracts must be uploaded to the Electronic Data Access (EDA) system, which serves as the primary repository f…
+
+[93] path=regulation_search docs=4 confidence=1.0
+  Q: Per EM385, when is a hot work permitted?
+  A: **Key Requirements**:
+- Hot work is permitted only in areas authorized by the USACE supervisor, KO, or COR, and must comply with local policies (EM385 Section 1-1).
+- A hot work permit must be obtained and maintained on file until the completion of the hot work (EM385 Section 1-1).
+- A fire watch is…
+
+[94] path=other docs=0 confidence=None
+  Q: I want to upload the specifications
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…
+
+[95] path=regulation_search docs=5 confidence=0.8452452301209572
+  Q: I want to load the submittal registry
+  A: **Key Requirements:**
+- **Submission of Proposals**: Contractors must adhere to the requirements outlined in DFARS 252.215-7010 regarding the submission of proposals, ensuring all necessary references and documentation are included (DFARS 252.215-7010).
+- **Subcontract Reporting**: Contractors are r…
+
+[96] path=regulation_search docs=4 confidence=0.95
+  Q: Is there a requirement to advise the government if a change has been made to a q…
+  A: **Key Requirements:**
+- Any changes to the Construction Safety and Phasing Plan (CSPP) or Safety Plan Compliance Document (SPCD) must be communicated in writing to the USACE supervisor, KO, or COR, as well as the Airfield Manager, before implementation (EM385 32-7).
+- For plans related to formwork a…
+
+[97] path=regulation_search docs=5 confidence=0.5212903225806451
+  Q: Are there qc program requirements in the FAR, DFAR, or EM385?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Quality Control Program (QCP) Requirements**: While the FAR does not explicitly mandate a QCP for all contracts, specific clauses may req…
+
+[98] path=regulation_search docs=5 confidence=0.794051061386466
+  Q: What is a PPI?
+  A: **Key Requirements:**
+- A PPI, or "Product Performance Information," is defined as data that describes the performance characteristics of a product, including reliability, maintainability, and other relevant metrics (DFARS 208.602-70).
+- PPIs are essential for making informed acquisition decisions a…
+
+[99] path=regulation_search docs=5 confidence=0.33999999999999997
+  Q: As a Project Manager, analyze the submittals requirements during the pre-award p…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Earned Value Management System (EVMS)**: Offerors must provide documentation confirming that their proposed EVMS complies with EIA-748 gu…
+
+[100] path=regulation_search docs=5 confidence=0.48
+  Q: As a Project Manager, analyze the rfis requirements during the pre-award phase o…
+  A: **Key Requirements:**
+- **RFP Content**: Ensure that Requests for Proposals (RFPs) clearly communicate the Government's requirements, anticipated terms and conditions, required proposal information, and evaluation factors (FAR 15.203).
+- **Cost Analysis**: Conduct timely and adequate cost or price a…
+
+[101] path=regulation_search docs=5 confidence=0.7478893337698203
+  Q: Where do I find my insurance information?
+  A: **Key Requirements:**
+- Contractors must maintain insurance coverage as specified in their contracts, which may include both purchased insurance and self-insurance (FAR 31.205-19(a)).
+- Self-insurance costs are allowable but must comply with specific accounting standards (FAR 31.205-19(c)).
+- If a c…
+
+[102] path=regulation_search docs=4 confidence=0.35
+  Q: We had a fire overnight at the site, what should I do?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Immediate Reporting**: Notify the appropriate authorities, including the site safety officer and local fire department, as per EM 385 gui…
+
+[103] path=regulation_search docs=5 confidence=0.8091796563504655
+  Q: Draft an Initial Phase inspection report verifying the first installation of Div…
+  A: **Key Requirements**:  
+- **Inspection of Equipment**: All HVAC components must be inspected and tested prior to initial use to ensure compliance with safety standards and operational readiness (EM385 18-5.a(2)). This includes verifying that all equipment is in a safe operating condition and meets m…
+
+[104] path=regulation_search docs=5 confidence=0.36
+  Q: As a Estimator, analyze the rfis requirements during the pre-award phase of a fe…
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements:**
+- **Preaward Compliance Evaluation**: For contracts valued at $10 million or more, both the prospective contractor and first-tier subcontract…
+
+[105] path=regulation_search docs=5 confidence=0.62
+  Q: As a Project Manager, analyze the safety requirements during the post-award phas…
+  A: **Key Requirements:**
+- **Construction Safety Plans**: A Competent Person (CP) must prepare a Construction Safety and Phasing Plan (CSPP) and a Safety Plan Compliance Document (SPCD) prior to the start of work. These documents must be submitted for review and acceptance by Airfield Managers at least…
+
+[106] path=regulation_search docs=5 confidence=0.8813947436898257
+  Q: Which FAR clause applies to differing site conditions?
+  A: **Key Requirements:**
+- The applicable FAR clause for differing site conditions is **FAR 52.236-2**, which mandates that contractors must provide written notice to the Contracting Officer of any subsurface or latent physical conditions that materially differ from those indicated in the contract (FAR…
+
+[107] path=regulation_search docs=5 confidence=0.54
+  Q: We have discovered an oil tank that is not on the drawings, what do I do next?
+  A: Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. Please verify the cited clauses before final use.
+
+**Key Requirements**:  
+- Notify the Contracting Officer immediately about the discrepancy between the discovered oil tank and the contract drawings (DFARS 252.236…
+
+[108] path=regulation_search docs=5 confidence=0.7
+  Q: What does the project manager do on a federal construction project?
+  A: **Key Requirements:**
+- The project manager is responsible for overseeing the execution of the construction project, ensuring compliance with contract specifications, safety standards, and regulatory requirements (FAR 36.212).
+- They coordinate with the contracting officer regarding significant matt…
+
+[109] path=other docs=0 confidence=None
+  Q: Test these queries
+  A: This question doesn't appear to be about government acquisition regulations. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.
+
+**Try asking something like:**
+- "What does FAR 52.212-4 cover?"
+- "What are the OSHA fall protection requirements?"
+- "How do small business s…

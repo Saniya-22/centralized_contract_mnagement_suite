@@ -18,6 +18,8 @@ API_URL = f"{API_BASE}/api/v1/query"
 FEEDBACK_URL = f"{API_BASE}/api/v1/feedback"
 LOGIN_URL = f"{API_BASE}/api/v1/auth/login"
 SIGNUP_URL = f"{API_BASE}/api/v1/auth/signup"
+THREADS_URL = f"{API_BASE}/api/v1/chat/threads"
+HISTORY_URL = f"{API_BASE}/api/v1/chat/history"
 WS_URL = (API_BASE.replace("http://", "ws://").replace("https://", "wss://")) + "/ws/chat"
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("DASHBOARD_REQUEST_TIMEOUT", "120"))
 ST_TITLE = "GovGig AI - Regulatory Command Center"
@@ -192,6 +194,8 @@ if 'last_perf' not in st.session_state:
     st.session_state.last_perf = {"latency": 0.0, "confidence": 0.0}
 if 'feedback_sent' not in st.session_state:
     st.session_state.feedback_sent = set()
+if 'thread_list' not in st.session_state:
+    st.session_state.thread_list = []
 if 'access_token' not in st.session_state:
     st.session_state.access_token = None
 if 'user_email' not in st.session_state:
@@ -304,6 +308,53 @@ with st.sidebar:
     if st.button("Reset Session Memory", type="secondary", use_container_width=True):
         st.session_state.history = []
         st.rerun()
+    st.divider()
+    st.subheader("Chat History")
+    if st.button("New Chat", type="primary", use_container_width=True, key="btn_new_chat"):
+        st.session_state.thread_id = str(uuid.uuid4())
+        st.session_state.history = []
+        st.rerun()
+    if st.button("Chat history", type="secondary", use_container_width=True, key="btn_refresh_threads"):
+        token = st.session_state.access_token
+        if token:
+            try:
+                r = httpx.get(THREADS_URL, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    st.session_state.thread_list = data.get("threads") or []
+                    st.success(f"Found {len(st.session_state.thread_list)} conversation(s).")
+                else:
+                    st.error("Could not load conversations.")
+            except Exception as e:
+                st.error(f"Failed to load: {e}")
+        st.rerun()
+    threads = st.session_state.thread_list
+    if threads:
+        def _thread_label(i):
+            t = threads[i]
+            date = (t.get("updated_at") or "")[:16].replace("T", " ")
+            prev = (t.get("preview") or "No preview")[:40]
+            return f"{date} — {prev}..."
+        idx = st.selectbox("Select conversation", range(len(threads)), format_func=_thread_label, key="thread_select")
+        if st.button("Open this thread", type="secondary", use_container_width=True, key="btn_open_thread"):
+            thread_id = threads[idx]["thread_id"]
+            token = st.session_state.access_token
+            if token and thread_id:
+                try:
+                    r = httpx.get(HISTORY_URL, params={"thread_id": thread_id}, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+                    if r.status_code == 200:
+                        data = r.json()
+                        hist = data.get("history") or []
+                        st.session_state.history = [{"role": h["role"], "text": h.get("text", "")} for h in hist]
+                        st.session_state.thread_id = thread_id
+                        st.success(f"Loaded {len(hist)} message(s).")
+                    else:
+                        st.error("Could not load conversation.")
+                except Exception as e:
+                    st.error(f"Failed to load: {e}")
+            st.rerun()
+    else:
+        st.caption("Click **Chat history** to see past conversations.")
 
 # --- MAIN UI ---
 col_main, col_evidence = st.columns([0.65, 0.35])
@@ -316,10 +367,11 @@ with col_main:
     chat_container = st.container(height=500, border=False)
     with chat_container:
         for i, chat in enumerate(st.session_state.history):
-            if chat['role'] == 'user':
-                st.markdown(f'<div class="user-msg"><b>You:</b><br>{chat["text"]}</div>', unsafe_allow_html=True)
+            text = chat.get("text") or chat.get("content") or ""
+            if chat.get("role") == "user":
+                st.markdown(f'<div class="user-msg"><b>You:</b><br>{text}</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="ai-msg"><b>AI Assistant:</b><br>{chat["text"]}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="ai-msg"><b>AI Assistant:</b><br>{text}</div>', unsafe_allow_html=True)
                 query_id = chat.get("query_id")
                 if query_id and query_id not in st.session_state.feedback_sent:
                     col_up, col_down, _ = st.columns([1, 1, 4])
@@ -471,7 +523,10 @@ with col_evidence:
                     st.markdown(f"**Rank {doc.get('rank', i+1)}: {doc.get('regulation_type', 'UNK')} {doc.get('section', '')}**")
                     st.caption(f"File: {doc.get('source', 'N/A')}")
                     st.info(doc.get('content', ''))
-                    st.progress(float(doc.get('score', 0)) if doc.get('score') else 0.0, text=f"Relevance: {float(doc.get('score', 0))*100:.1f}%")
+                    raw_score = float(doc.get('score', 0)) if doc.get('score') is not None else 0.0
+                    progress_val = min(1.0, max(0.0, raw_score))  # st.progress() requires [0, 1]
+                    pct = min(100.0, max(0.0, raw_score * 100))
+                    st.progress(progress_val, text=f"Relevance: {pct:.1f}%")
         else:
             st.info("No evidence retrieved for this query.")
     else:
