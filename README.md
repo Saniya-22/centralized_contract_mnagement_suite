@@ -16,6 +16,9 @@ Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powere
 | **Conversation Persistence** | Supported | LangGraph state in PostgreSQL via `PostgresSaver` |
 | **API Response Caching** | Supported | SHA-256 hashed, scoped by user + thread, 24h TTL |
 | **Sovereign-AI Guardrails** | Supported | Post-synthesis safety verdict (`allow`/`warn`/`block`, soft or hard mode) |
+| **Letter-Drafting Agent** | Supported | Full draft (serial letter, REA, RFI) when user requests a **letter-type** document; grounded in retrieved regulations |
+| **Document-Type Routing** | Supported | Letter → letter_drafter; checklist/form → synthesis (retrieval + checklist-style answer) |
+| **Out-of-Scope (OOS)** | Supported | Direct LLM call: brief helpful answer + polite scope notification (FAR/DFARS/EM385 specialist) |
 | **Direct Clause Lookup** | Supported | DB-direct fetch for exact clause references (no LLM) |
 | **Quality Metrics** | Supported | `citation_coverage`, `groundedness_score`, `evidence_score`, `quality_score` |
 | **Streamlit Dashboard** | Supported | Glassmorphism UI with real-time performance gauges |
@@ -42,13 +45,14 @@ Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powere
 │  └──────────────┘    │  DirectClauseLookup     │  │
 │        │             │  ReflectionRAG          │  │
 │   out_of_scope       └───────────┬────────────┘  │
-│   -> immediate                   │               │
-│     refusal                      ▼               │
+│   -> OOS LLM                    │               │
+│     (answer + polite    document_request_type?   │
+│      notification)      ├─letter──> LetterDrafter│
+│                         └─else───> Synthesizer   │
 │                      ┌────────────────────────┐  │
-│                      │    Synthesizer Node     │  │
-│                      │  GPT-4o-mini (streaming)│  │
-│                      │  + Quality Assessment   │  │
-│                      │  + SovereignGuard       │  │
+│                      │ LetterDrafter/Synthesizer│  │
+│                      │  GPT-4o-mini + Quality  │  │
+│                      │  + SovereignGuard        │  │
 │                      └────────────────────────┘  │
 └──────────────────────────────────────────────────┘
                         │
@@ -102,9 +106,10 @@ govgig-feature-python-ai-assistant/
 │       └── rules.py             # Regex patterns for FAR/DFARS/EM385
 ├── dashboard/
 │   └── app.py                   # Streamlit glassmorphism dashboard
-├── tests/                       # 7 test modules (pytest)
-├── scripts/                     # Quality gate, benchmarks, migration tools
-├── specifications/              # Source PDF corpus (16 files)
+├── tests/                       # Pytest (query_classifier, orchestrator, api, etc.)
+├── scripts/                     # deploy.sh, quality_gate, run_test_queries, migrations
+├── infra/                       # Terraform: VPC, ECS, ALB, RDS, ECR, Secrets (AWS)
+├── src/scripts/                 # setupRegulationsDB.sql, setupAuthDB.sql, setupChatHistory.sql
 ├── unified_test.py              # End-to-end smoke test
 ├── gen_test_token.py            # JWT token generator for testing
 ├── run.sh                       # Dev environment setup + server start
@@ -248,11 +253,12 @@ User Query
     │
     ▼
 ┌─ QueryClassifier (deterministic, zero-LLM) ──────────────┐
-│  Outputs: intent, confidence, regulation_type, clause_ref │
-│  Intents: clause_lookup | regulation_search | out_of_scope│
+│  Outputs: intent, confidence, regulation_type, clause_ref,  │
+│           document_request_type (letter | checklist | form) │
+│  Intents: clause_lookup | regulation_search | out_of_scope  │
 └───────────────────────────────────────────────────────────┘
     │
-    ├─ out_of_scope -> Immediate refusal (no DB/LLM calls)
+    ├─ out_of_scope -> Direct OOS LLM call (brief answer + polite scope notification)
     │
     ├─ clause_lookup -> Direct DB fetch by clause reference
     │                   (e.g., "FAR 52.219-8")
@@ -271,13 +277,13 @@ User Query
                            │  Merge supplemental documents       │
                            └────────────────────────────────────┘
                                 │
-                                ▼
-                           ┌─ Synthesizer (GPT-4o-mini) ────────┐
-                           │  Format documents -> LLM prompt      │
-                           │  Assess quality (citation, grounding)│
-                           │  Apply low_confidence label if weak  │
-                           │  SovereignGuard safety check         │
-                           └─────────────────────────────────────┘
+                    document_request_type (classifier)
+                                │
+                ├─ letter ──────> LetterDrafter (full draft)
+                └─ else ────────> Synthesizer (GPT-4o-mini)
+                                    Format docs -> LLM prompt
+                                    Quality (citation, groundedness)
+                                    low_confidence label + SovereignGuard
 ```
 
 ## Configuration
@@ -331,9 +337,15 @@ All settings loaded from `.env` via Pydantic `BaseSettings`.
 | `PG_HOST` | `localhost` | PostgreSQL host |
 | `PG_PORT` | `5432` | PostgreSQL port |
 | `PG_DB` | `daedalus` | Database name |
-| `PG_USER` | `postgres` | Database user |
+| `PG_USER` | `daedalus_admin` | Database user |
 | `PG_POOL_MIN` | `2` | Connection pool minimum |
 | `PG_POOL_MAX` | `10` | Connection pool maximum |
+
+### CORS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORS_ORIGINS` | `["http://localhost:3000", "http://localhost:3001"]` | Allowed origins. On AWS ECS, Terraform passes a JSON array string; the app parses it automatically. |
 
 ### Sovereign Guard (Optional)
 
@@ -404,7 +416,7 @@ python pipeline.py
 
 ```bash
 cp .env.example .env
-docker-compose up -d        # Full stack
+docker-compose up -d        # Full stack (backend + postgres)
 docker-compose logs -f backend
 ```
 
@@ -416,8 +428,45 @@ docker run -p 8000:8000 \
   -e OPENAI_API_KEY=your-key \
   -e PG_HOST=host.docker.internal \
   -e PG_PASSWORD=your-password \
+  -e JWT_SECRET_KEY=your-jwt-secret \
   govgig-backend
 ```
+
+## AWS Deployment (Terraform + ECS)
+
+Infrastructure is in `infra/` (Terraform). The app is deployed as a container on **AWS ECS Fargate** behind an ALB, with **RDS PostgreSQL** (pgvector) and secrets in **Secrets Manager**.
+
+### What Terraform Creates
+
+- **VPC**, public/private subnets, security groups  
+- **RDS PostgreSQL 16** (one instance, one database: `daedalus`)  
+- **ECS Fargate** cluster, task definition, service (port 8000)  
+- **ALB** + HTTPS listener (ACM certificate)  
+- **ECR** repository for the app image  
+- **Secrets Manager** for env, auth, and DB credentials  
+
+### Deploy Steps
+
+1. **Configure Terraform**  
+   Copy `infra/backend.hcl.example` → `backend.hcl` and set S3 bucket, key, DynamoDB table for state.  
+   Copy `infra/terraform.tfvars.example` → `terraform.tfvars` and set `acm_certificate_arn`, `route53_zone_id`, and sensitive variables (e.g. from CI/CD).
+
+2. **Apply infrastructure and deploy app**  
+   ```bash
+   ./scripts/deploy.sh
+   ```  
+   This runs `terraform init` and `terraform apply`, waits for RDS, builds and pushes the Docker image to ECR, and forces a new ECS deployment.
+
+3. **Post-deploy: schema and data**  
+   Terraform does **not** create application tables or load regulations data. After RDS is available:
+   - Run schema scripts against the RDS endpoint (e.g. from a bastion or CI):  
+     `src/scripts/setupRegulationsDB.sql`, `src/scripts/setupAuthDB.sql`, `src/scripts/setupChatHistory.sql` (and any other setup scripts the app expects).
+   - **LangGraph checkpointer** tables are created automatically on first app use.
+   - Run the **ingest pipeline** to populate `embeddings_dense` / `embeddings_sparse` (see Data Ingestion).
+
+### Project / Service Naming
+
+- Infra uses **project_name = "daedalus"** (e.g. `daedalus-staging-pg`, ECR repo, ECS service). The default domain is `staging-ai-daedalus.govgig.us`. The app name in the UI remains "GovGig AI".
 
 ## Monitoring
 
@@ -447,7 +496,7 @@ LOG_LEVEL=DEBUG python -m uvicorn src.api.main:app
 
 ## Pilot Testing Notes
 
-- **Low-confidence handling**: Answers are never hard-blocked by default. `low_confidence: true` signals weak evidence grounding - treat as reviewer-required in pilot workflows.
+- **Low-confidence handling**: Answers are never hard-blocked by default. `low_confidence: true` signals weak evidence grounding; thresholds are tuned for procedural/analytical queries and document drafts. Treat as reviewer-required in pilot workflows.
 - **Rate limiting**: 10 requests per minute per authenticated user. Returns HTTP 429 if exceeded.
 - **State isolation**: Each REST request gets a fresh LangGraph state by default. The orchestrator slices accumulated lists to prevent stale data from prior sessions from leaking into responses.
 - **Recommended workflow**: Track `quality_metrics` pass rates using `scripts/quality_gate.py`.

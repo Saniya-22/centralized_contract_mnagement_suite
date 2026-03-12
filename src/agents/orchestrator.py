@@ -10,7 +10,7 @@ import re
 
 from src.state.graph_state import GovGigState
 from src.agents.data_retrieval import DataRetrievalAgent
-from src.agents.prompts import get_synthesizer_prompt
+from src.agents.prompts import get_synthesizer_prompt, get_letter_drafter_prompt, get_oos_response_prompt
 from src.tools.llm_tools import format_documents
 from src.tools.query_classifier import classify_query, QueryIntent
 from src.services.sovereign_guard import SovereignGuard
@@ -50,6 +50,14 @@ class GovGigOrchestrator:
             streaming=True,
             max_tokens=400,
         )
+        # Letter drafter: same model, higher token limit for full drafts.
+        self.letter_drafter_llm = ChatOpenAI(
+            model=settings.SYNTHESIZER_MODEL,
+            api_key=settings.OPENAI_API_KEY,
+            temperature=settings.TEMPERATURE,
+            streaming=False,
+            max_tokens=1200,
+        )
 
         # Initialize agents
         self.data_retrieval = DataRetrievalAgent()
@@ -73,9 +81,9 @@ class GovGigOrchestrator:
             
         # RRF scores without a reranker are typically very small (< 0.05).
         # A rank 1 match in a single index is 1/(60+1) = ~0.0164.
-        # We scale this so a Rank 1 match represents high confidence (~0.82)
+        # We scale so Rank 1 ≈ 0.82; apply a small floor so weak docs don't over-penalize avg
         if 0 < score <= 0.05:
-            return min(score * 50.0, 1.0)
+            return min(max(score * 50.0, 0.10), 1.0)
             
         # Already normalized 0..1 (e.g. from clause_lookup)
         return min(max(score, 0.0), 1.0)
@@ -156,31 +164,48 @@ class GovGigOrchestrator:
             state.get("query_intent") == QueryIntent.CLAUSE_LOOKUP.value
             or bool(state.get("detected_clause_ref"))
         )
+        is_procedural = bool(state.get("is_procedural", False))
         min_docs = 1.0 if is_clause_lookup else 2.0
-        quality_score = (
-            0.40 * evidence_avg
-            + 0.35 * groundedness
-            + 0.25 * citation_coverage
-        )
 
-        # Soft guardrails: annotate low confidence instead of blocking.
+        # Procedural/analytical: reweight toward evidence + grounding; citation bar lower
+        citation_bar = 0.35 if is_procedural else 0.42
+        if is_procedural:
+            quality_score = (
+                0.45 * evidence_avg
+                + 0.40 * groundedness
+                + 0.15 * citation_coverage
+            )
+            quality_bar = 0.50
+        else:
+            quality_score = (
+                0.40 * evidence_avg
+                + 0.35 * groundedness
+                + 0.25 * citation_coverage
+            )
+            quality_bar = 0.52
+
+        # Soft guardrails: annotate low confidence instead of blocking (tuned to reduce over-triggering)
         low_confidence = bool(
             evidence.get("doc_count", 0.0) < min_docs
-            or evidence_avg < 0.20
-            or groundedness < 0.45
-            or citation_coverage < 0.45
-            or quality_score < 0.55
+            or evidence_avg < 0.18
+            or groundedness < 0.42
+            or citation_coverage < citation_bar
+            or quality_score < quality_bar
         )
         # Don't over-apply: high evidence = trust the answer, avoid notice
         if evidence_avg >= 0.80:
             low_confidence = False
         elif evidence_avg >= 0.75:
-            # At 0.75+ evidence, skip notice (quality_score can be borderline)
             low_confidence = False
         elif is_clause_lookup and evidence.get("doc_count", 0) >= 1 and evidence_avg >= 0.70:
             low_confidence = False
         elif evidence_avg >= 0.70 and citation_coverage >= 0.80:
-            # Strong citations + solid evidence: skip notice (e.g. CPARS appeal, procedural)
+            low_confidence = False
+        elif evidence_avg >= 0.62 and groundedness >= 0.48:
+            # Solid evidence + decent grounding: skip notice (reduces false low-confidence for analytical)
+            low_confidence = False
+        elif state.get("is_document_request") and evidence.get("doc_count", 0) >= 2 and evidence_avg >= 0.55:
+            # Letter/REA/RFI draft with enough docs: avoid notice (drafts are less citation-dense by design)
             low_confidence = False
 
         return {
@@ -223,32 +248,41 @@ class GovGigOrchestrator:
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
         workflow = StateGraph(GovGigState)
-        
+
         # Add nodes
         workflow.add_node("router", self._route_query)
         workflow.add_node("data_retrieval", self.data_retrieval.run)
+        workflow.add_node("letter_drafter", self._draft_letter)
         workflow.add_node("synthesizer", self._synthesize_response)
-        
+
         # Set entry point
         workflow.set_entry_point("router")
-        
+
         # Add conditional edges from router
         workflow.add_conditional_edges(
             "router",
             self._determine_next_agent,
             {
                 "data_retrieval": "data_retrieval",
-                "synthesizer": "synthesizer",  # Direct to synthesizer for simple queries
+                "synthesizer": "synthesizer",
                 "end": END
             }
         )
-        
-        # Data retrieval always goes to synthesizer
-        workflow.add_edge("data_retrieval", "synthesizer")
-        
-        # Synthesizer always ends
+
+        # After data_retrieval: route to letter_drafter (document request) or synthesizer
+        workflow.add_conditional_edges(
+            "data_retrieval",
+            self._after_retrieval_routing,
+            {
+                "letter_drafter": "letter_drafter",
+                "synthesizer": "synthesizer",
+            }
+        )
+
+        # Both letter_drafter and synthesizer go to END
+        workflow.add_edge("letter_drafter", END)
         workflow.add_edge("synthesizer", END)
-        
+
         logger.info("LangGraph workflow built")
         return workflow
     
@@ -263,8 +297,9 @@ class GovGigOrchestrator:
         classification = await classify_query(query)
         intent         = classification.intent
 
-        # Map intent to graph routing decision
-        next_agent = "end" if intent == QueryIntent.OUT_OF_SCOPE else "data_retrieval"
+        # Map intent to graph routing decision.
+        # If user asked for a document draft (letter/REA/RFI), send to data_retrieval even when intent is OUT_OF_SCOPE.
+        next_agent = "end" if (intent == QueryIntent.OUT_OF_SCOPE and not classification.is_document_request) else "data_retrieval"
 
         elapsed = _time.perf_counter() - _t0_node
         logger.info(f"[Telemetry] Node 'router' completed in {elapsed:.2f}s")
@@ -282,7 +317,8 @@ class GovGigOrchestrator:
             "detected_reg_type":   classification.regulation_type,
             "is_procedural":        classification.is_procedural,
             "is_contract_co":       classification.is_contract_co,
-            "is_document_request":  classification.is_document_request,
+            "is_document_request":   classification.is_document_request,
+            "document_request_type": getattr(classification, "document_request_type", None),
             "agent_path": [
                 f"Router: intent={intent.value} conf={classification.confidence:.2f} "
                 + (f"ref='{classification.clause_reference}' " if classification.clause_reference else "")
@@ -291,16 +327,20 @@ class GovGigOrchestrator:
             ],
         }
 
-        if intent == QueryIntent.OUT_OF_SCOPE:
-            delta["generated_response"] = (
-                "This question doesn't appear to be about government acquisition regulations. "
-                "I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks.\n\n"
-                "**Try asking something like:**\n"
-                "- \"What does FAR 52.212-4 cover?\"\n"
-                "- \"What are the OSHA fall protection requirements?\"\n"
-                "- \"How do small business set-asides work?\"\n"
-                "- \"Explain DFARS 252.204-7012 cybersecurity requirements.\""
-            )
+        if intent == QueryIntent.OUT_OF_SCOPE and not classification.is_document_request:
+            # Direct LLM call: answer briefly from general knowledge + polite scope notification
+            try:
+                messages = [
+                    SystemMessage(content=get_oos_response_prompt(state)),
+                    HumanMessage(content=query),
+                ]
+                oos_response = await self.synthesizer_llm.ainvoke(messages)
+                delta["generated_response"] = (oos_response.content or "").strip()
+            except Exception as e:
+                logger.warning(f"[Router] OOS LLM call failed: {e}, using fallback message")
+                delta["generated_response"] = (
+                    "This question is outside my main area. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks—ask me about those for more accurate answers."
+                )
 
         return delta
     
@@ -320,7 +360,145 @@ class GovGigOrchestrator:
             # Other agents not yet implemented, go directly to synthesizer
             logger.warning(f"Agent {next_agent} not implemented, going to synthesizer")
             return "synthesizer"
-    
+
+    def _after_retrieval_routing(
+        self, state: GovGigState
+    ) -> Literal["letter_drafter", "synthesizer"]:
+        """Route to letter_drafter when user asked for a draft; otherwise synthesizer."""
+        if state.get("is_document_request"):
+            return "letter_drafter"
+        return "synthesizer"
+
+    def _draft_letter(self, state: GovGigState) -> Dict[str, Any]:
+        """Produce a full letter/document draft from retrieved documents. Used when is_document_request is True."""
+        import time as _time
+        _t0_node = _time.perf_counter()
+
+        new_agent_path: list = []
+        new_errors: list = []
+
+        try:
+            logger.info("Letter drafter: producing full draft")
+
+            all_documents = state.get("retrieved_documents", [])
+            offsets = state.get("run_offsets") or {}
+            start_idx = int(offsets.get("retrieved_documents", 0) or 0)
+            documents = all_documents[start_idx:] if start_idx > 0 else all_documents
+            documents = [d for d in documents if not d.get("error")]
+
+            if not documents:
+                new_agent_path.append("LetterDrafter: No documents — returning fallback")
+                return {
+                    "generated_response": self._safe_fallback_message(),
+                    "quality_metrics": {
+                        "citation_coverage": 0.0,
+                        "groundedness_score": 0.0,
+                        "evidence_score": 0.0,
+                        "quality_score": 0.0,
+                        "low_confidence": True,
+                    },
+                    "low_confidence": True,
+                    "agent_path": new_agent_path,
+                }
+
+            new_agent_path.append(
+                f"LetterDrafter: Processing {len(documents)} retrieved documents"
+            )
+            evidence = self._evidence_summary(documents)
+            formatted_docs = format_documents(documents, max_tokens=settings.RAG_TOKEN_LIMIT)
+            system_prompt = get_letter_drafter_prompt(state, documents)
+            user_message = (
+                f"Retrieved Documents:\n{formatted_docs}\n\n"
+                f"User Request: {state['query']}"
+            )
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message),
+            ]
+            response = self.letter_drafter_llm.invoke(
+                messages, config={"tags": ["letter_drafter_token"]}
+            )
+            final_response = response.content or ""
+            quality_metrics = self._assess_answer_quality(
+                final_response, documents, evidence, state
+            )
+
+            guard_verdict = self.sovereign_guard.evaluate_response(
+                response_text=final_response,
+                query=state.get("query", ""),
+                documents=documents,
+            )
+            if guard_verdict:
+                quality_metrics["sovereign_guard"] = guard_verdict
+                guard_action = str(guard_verdict.get("action") or "allow").lower()
+                guard_should_block = bool(guard_verdict.get("should_block"))
+                guard_reason = guard_verdict.get("reason") or "Automated guardrails flagged policy risk."
+
+                if guard_action in {"warn", "block"} or guard_should_block:
+                    quality_metrics["low_confidence"] = True
+
+                if guard_should_block:
+                    block_mode = str(settings.SOVEREIGN_GUARD_BLOCK_MODE or "soft").lower()
+                    if block_mode == "hard":
+                        final_response = self._safe_blocked_message()
+                        new_agent_path.append(
+                            "LetterDrafter: Sovereign guard BLOCK applied (hard mode)"
+                        )
+                    else:
+                        final_response = self._with_safety_review_label(
+                            final_response, str(guard_reason)
+                        )
+                        new_agent_path.append(
+                            "LetterDrafter: Sovereign guard BLOCK applied (soft mode)"
+                        )
+                elif guard_action == "warn":
+                    final_response = self._with_safety_review_label(
+                        final_response, str(guard_reason)
+                    )
+                    new_agent_path.append("LetterDrafter: Sovereign guard WARN applied")
+                else:
+                    new_agent_path.append("LetterDrafter: Sovereign guard ALLOW")
+
+            final_response = self._with_low_confidence_label(
+                final_response, bool(quality_metrics["low_confidence"])
+            )
+
+            elapsed = _time.perf_counter() - _t0_node
+            logger.info(f"[Telemetry] Node 'letter_drafter' completed in {elapsed:.2f}s")
+            new_agent_path.append(
+                f"LetterDrafter: quality score={quality_metrics['quality_score']:.2f}, "
+                f"citation_coverage={quality_metrics['citation_coverage']:.2f}"
+            )
+            new_agent_path.append(
+                f"LetterDrafter: Generated {len(final_response)}-char draft"
+            )
+
+            return {
+                "generated_response": final_response,
+                "confidence_score": float(evidence.get("avg_norm", 0.0)),
+                "quality_metrics": quality_metrics,
+                "low_confidence": bool(quality_metrics["low_confidence"]),
+                "agent_path": new_agent_path,
+            }
+
+        except Exception as exc:
+            logger.error(f"Letter drafter failed: {exc}", exc_info=True)
+            new_errors.append(f"[LetterDrafter] {exc}")
+            new_agent_path.append(f"LetterDrafter: ERROR — {exc}")
+            return {
+                "generated_response": "An error occurred while generating the draft. Please try again.",
+                "quality_metrics": {
+                    "citation_coverage": 0.0,
+                    "groundedness_score": 0.0,
+                    "evidence_score": 0.0,
+                    "quality_score": 0.0,
+                    "low_confidence": True,
+                },
+                "low_confidence": True,
+                "agent_path": new_agent_path,
+                "errors": new_errors,
+            }
+
     def _synthesize_response(self, state: GovGigState) -> Dict[str, Any]:
         """Synthesize the final response from retrieved documents."""
         import time as _time
@@ -526,6 +704,7 @@ class GovGigOrchestrator:
             "is_procedural": None,
             "is_contract_co": None,
             "is_document_request": None,
+            "document_request_type": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
@@ -621,6 +800,7 @@ class GovGigOrchestrator:
             "is_procedural": None,
             "is_contract_co": None,
             "is_document_request": None,
+            "document_request_type": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
@@ -746,6 +926,7 @@ class GovGigOrchestrator:
             "is_procedural": None,
             "is_contract_co": None,
             "is_document_request": None,
+            "document_request_type": None,
 
             "retrieved_documents": [],
             "tool_calls": [],

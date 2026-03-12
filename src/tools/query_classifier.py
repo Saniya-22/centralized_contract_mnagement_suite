@@ -231,9 +231,34 @@ _DOCUMENT_REQUEST_TRIGGERS: tuple[str, ...] = (
     "generate a ", "generate me a ", "create a ", "prepare a ",
     "serial letter", "write the ko", "write a letter", "draft a letter",
     "draft an rea", "write an rea", "request for equitable", "rea for ",
-    "rfi ", "write an rfi", "draft an rfi", "generate a form", "generate a checklist",
+    "rfi ", "write an rfi", "draft an rfi",
+    "generate a form", "generate a checklist",
     "stop-work order", "inspection report", "phase inspection",
 )
+
+# Checklist/form phrasing: these are document requests but go to synthesis (checklist content), not letter_drafter.
+_CHECKLIST_REQUEST_PHRASES: tuple[str, ...] = (
+    "generate a checklist", "create a checklist", "prepare a checklist",
+    "draft a checklist", "write a checklist", "inspection checklist",
+)
+_FORM_REQUEST_PHRASES: tuple[str, ...] = (
+    "generate a form", "create a form", "prepare a form",
+    "draft a form", "write a form",
+)
+
+
+def get_document_request_type(query: str | None) -> Optional[str]:
+    """Classify document request into letter | checklist | form. Only letter goes to letter_drafter."""
+    if not query or not query.strip():
+        return None
+    q = query.strip().lower()
+    if any(p in q for p in _CHECKLIST_REQUEST_PHRASES):
+        return "checklist"
+    if any(p in q for p in _FORM_REQUEST_PHRASES):
+        return "form"
+    if any(t in q for t in _DOCUMENT_REQUEST_TRIGGERS):
+        return "letter"
+    return None
 
 
 def is_procedural_query(query: str | None) -> bool:
@@ -253,11 +278,8 @@ def is_contract_co_query(query: str | None) -> bool:
 
 
 def is_document_request_query(query: str | None) -> bool:
-    """True if the query asks to draft/generate a document (letter, REA, form). We give guidance, not full draft."""
-    if not query or not query.strip():
-        return False
-    q = query.strip().lower()
-    return any(t in q for t in _DOCUMENT_REQUEST_TRIGGERS)
+    """True if the query asks to draft/generate a document (letter only). Checklist/form use synthesis, not letter_drafter."""
+    return get_document_request_type(query) == "letter"
 
 
 # ── Source normalisation ───────────────────────────────────────────────────────
@@ -321,7 +343,8 @@ class ClassificationResult:
     # Pipeline flags: set for in-scope queries so retrieval/synthesis use one source of truth
     is_procedural:       bool            = False  # steps / what to do
     is_contract_co:      bool            = False  # frequency/schedule → contract/CO
-    is_document_request: bool            = False  # draft/write/generate document → guidance only
+    is_document_request: bool            = False  # True only for letter-type; checklist/form use synthesis
+    document_request_type: Optional[str] = None   # "letter" | "checklist" | "form" | None
 
     @property
     def is_clause_lookup(self) -> bool:
@@ -453,7 +476,8 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
     normalised = _normalize_query(query)
     proc = is_procedural_query(normalised)
     co   = is_contract_co_query(normalised)
-    doc  = is_document_request_query(normalised)
+    doc_type = get_document_request_type(normalised)
+    doc  = (doc_type == "letter")  # only letter-type goes to letter_drafter; checklist/form use synthesis
 
     # ── 0. Cache Check ───────────────────────────────────────────────────────────
     if normalised in _ASYNC_CACHE:
@@ -476,6 +500,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_procedural       = proc,
             is_contract_co      = co,
             is_document_request = doc,
+            document_request_type = doc_type,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -497,6 +522,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_procedural       = proc,
             is_contract_co      = co,
             is_document_request = doc,
+            document_request_type = doc_type,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -516,6 +542,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_procedural       = proc,
             is_contract_co      = co,
             is_document_request = doc,
+            document_request_type = doc_type,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -542,6 +569,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_procedural       = proc,
             is_contract_co      = co,
             is_document_request = doc,
+            document_request_type = doc_type,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -555,6 +583,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_procedural       = proc,
             is_contract_co      = co,
             is_document_request = doc,
+            document_request_type = doc_type,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -586,11 +615,17 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
                 is_procedural       = proc,
                 is_contract_co      = co,
                 is_document_request = doc,
+                document_request_type = doc_type,
             )
             _ASYNC_CACHE[normalised] = res
             return res
 
     # ── 6. Out of scope ────────────────────────────────────────────────────────────
-    res = ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
+    res = ClassificationResult(
+        intent=QueryIntent.OUT_OF_SCOPE,
+        confidence=0.0,
+        is_document_request=doc,
+        document_request_type=doc_type,
+    )
     _ASYNC_CACHE[normalised] = res
     return res

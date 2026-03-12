@@ -1,7 +1,7 @@
 """Tests for the GovGigOrchestrator."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from types import SimpleNamespace
 from src.agents.orchestrator import GovGigOrchestrator
 from src.tools.query_classifier import QueryIntent
@@ -48,10 +48,26 @@ def test_determine_next_agent(orchestrator):
     # Test data_retrieval path
     state = {"next_agent": "data_retrieval"}
     assert orchestrator._determine_next_agent(state) == "data_retrieval"
-    
+
+    # Test end path (out of scope)
+    state = {"next_agent": "end"}
+    assert orchestrator._determine_next_agent(state) == "end"
+
     # Test unknown agent path (fallback to synthesizer)
     state = {"next_agent": "non_existent"}
     assert orchestrator._determine_next_agent(state) == "synthesizer"
+
+
+def test_after_retrieval_routing(orchestrator):
+    """Route to letter_drafter when is_document_request; else synthesizer."""
+    state = {"is_document_request": True}
+    assert orchestrator._after_retrieval_routing(state) == "letter_drafter"
+
+    state = {"is_document_request": False}
+    assert orchestrator._after_retrieval_routing(state) == "synthesizer"
+
+    state = {}
+    assert orchestrator._after_retrieval_routing(state) == "synthesizer"
 
 
 @patch('src.agents.orchestrator.get_synthesizer_prompt')
@@ -95,11 +111,96 @@ def test_synthesize_response_no_docs(orchestrator):
         "query": "test query",
         "retrieved_documents": []
     }
-    
+
     result = orchestrator._synthesize_response(state)
-    
+
     assert "sufficient high-confidence evidence" in result["generated_response"]
     assert "Synthesizer: No documents" in result["agent_path"][-1]
+
+
+def test_draft_letter_no_docs(orchestrator):
+    """Letter drafter returns fallback when no documents."""
+    state = {
+        "query": "Write a serial letter notifying the KO of delay",
+        "retrieved_documents": [],
+    }
+    result = orchestrator._draft_letter(state)
+    assert "sufficient high-confidence evidence" in result["generated_response"]
+    assert result["low_confidence"] is True
+    assert any("LetterDrafter" in p for p in result["agent_path"])
+
+
+@patch('src.agents.orchestrator.get_letter_drafter_prompt')
+@patch('src.agents.orchestrator.format_documents')
+def test_draft_letter_success(mock_format, mock_prompt, orchestrator):
+    """Letter drafter produces full draft when documents are present."""
+    mock_format.return_value = "Formatted Docs"
+    mock_prompt.return_value = "System Prompt"
+
+    state = {
+        "query": "Write a serial letter notifying the KO of wildfire impact",
+        "retrieved_documents": [
+            {"content": "FAR 52.242-5 permits excusable delay [FAR 52.242-5].", "score": 0.8},
+            {"content": "Notify Contracting Officer in writing [FAR 52.236-2].", "score": 0.75},
+        ],
+    }
+
+    draft_body = (
+        "Date: [Insert Date]\n\nTo: Contracting Officer\nFrom: Contractor\n"
+        "Subject: Notice of Wildfire Impact\n\nParagraph citing FAR 52.242-5 and 52.236-2.\n\n"
+        "Draft for reference only; tailor to your situation and consult your contract and legal/CO as needed."
+    )
+    mock_response = MagicMock(spec=AIMessage)
+    mock_response.content = draft_body
+    orchestrator.letter_drafter_llm.invoke.return_value = mock_response
+
+    result = orchestrator._draft_letter(state)
+
+    assert result["generated_response"] == draft_body
+    assert "quality_metrics" in result
+    assert any("LetterDrafter" in p for p in result["agent_path"])
+    assert "LetterDrafter: Generated" in result["agent_path"][-1]
+
+
+@pytest.mark.asyncio
+async def test_run_async_document_request_routes_to_letter_drafter(orchestrator):
+    """E2E: Document-request query goes through letter_drafter and returns a draft."""
+    with patch('src.agents.orchestrator.classify_query', new_callable=AsyncMock) as mock_classify:
+        mock_classify.return_value = Mock(
+            intent=QueryIntent.REGULATION_SEARCH,
+            confidence=0.9,
+            clause_reference=None,
+            regulation_type="FAR",
+            is_procedural=False,
+            is_contract_co=False,
+            is_document_request=True,
+        )
+        orchestrator.data_retrieval.run = AsyncMock(return_value={
+            "retrieved_documents": [
+                {"content": "FAR 52.242-5 excusable delay [FAR 52.242-5].", "score": 0.8},
+                {"content": "Notify KO in writing [FAR 52.236-2].", "score": 0.75},
+            ],
+            "regulation_types_used": ["FAR"],
+            "agent_path": ["DataRetrievalAgent: completed"],
+        })
+        draft_text = (
+            "To: Contracting Officer\nFrom: Contractor\nSubject: Wildfire Impact\n\n"
+            "Body with FAR 52.242-5 and 52.236-2.\n\n"
+            "Draft for reference only; tailor to your situation and consult your contract and legal/CO as needed."
+        )
+        orchestrator.letter_drafter_llm.invoke.return_value = MagicMock(
+            spec=AIMessage, content=draft_text
+        )
+
+        result = await orchestrator.run_async(
+            "Write a serial letter notifying the KO of the wildfire impact",
+            context={"thread_id": "e2e-test", "person_id": "user1"},
+        )
+
+        assert "LetterDrafter" in " ".join(result["agent_path"])
+        assert "To:" in result["response"] or "Contracting Officer" in result["response"]
+        assert "Draft for reference only" in result["response"]
+        assert result["response"] == draft_text
 
 
 @patch('src.agents.orchestrator.get_synthesizer_prompt')

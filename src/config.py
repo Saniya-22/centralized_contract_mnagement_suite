@@ -1,5 +1,6 @@
 """Configuration management for GovGig AI Backend"""
 
+import json
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 from typing import Optional
@@ -136,7 +137,28 @@ class Settings(BaseSettings):
         if normalized in {"soft", "hard"}:
             return normalized
         raise ValueError("SOVEREIGN_GUARD_BLOCK_MODE must be either 'soft' or 'hard'")
-    
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value):
+        """Accept JSON array string from ECS (Terraform jsonencode) or list."""
+        if value is None:
+            return ["http://localhost:3000", "http://localhost:3001"]
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return ["http://localhost:3000", "http://localhost:3001"]
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return list(parsed) if isinstance(parsed, list) else [str(parsed)]
+                except json.JSONDecodeError:
+                    pass
+            return [origin.strip() for origin in s.split(",") if origin.strip()]
+        return ["http://localhost:3000", "http://localhost:3001"]
+
     @property
     def database_url(self) -> str:
         """Construct database URL"""

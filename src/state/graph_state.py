@@ -36,7 +36,8 @@ class GovGigState(MessagesState):
     detected_reg_type: Optional[str]   # e.g. "FAR", "DFARS", "EM385"
     is_procedural: Optional[bool]       # steps / what to do (from classifier)
     is_contract_co: Optional[bool]      # frequency/schedule → contract/CO (from classifier)
-    is_document_request: Optional[bool]  # draft/write/generate doc → guidance only (from classifier)
+    is_document_request: Optional[bool]  # True only for letter-type; checklist/form use synthesis (from classifier)
+    document_request_type: Optional[str]  # "letter" | "checklist" | "form" | None
     agent_path: Annotated[List[str], operator.add]  # Track agent execution path
     
     # Chain-of-Thought

@@ -36,6 +36,7 @@ resource "aws_ecs_task_definition" "main" {
         }
       ]
 
+      # DB secret keys (host, port, database, username, password) must match infra/rds.tf secret_string keys.
       secrets = [
         {
           name      = "OPENAI_API_KEY"

@@ -1,7 +1,12 @@
 """Tests for the deterministic query classifier."""
 
 import pytest
-from src.tools.query_classifier import classify_query, QueryIntent
+from src.tools.query_classifier import (
+    classify_query,
+    QueryIntent,
+    get_document_request_type,
+    is_document_request_query,
+)
 
 
 # ── Basic edge cases ──────────────────────────────────────────────────────────
@@ -219,3 +224,58 @@ async def test_keyword_plural_support():
     result = await classify_query("Check for safety requirements")
     assert result.intent == QueryIntent.REGULATION_SEARCH
     assert "requirement" in result.matched_keywords
+
+
+# ── Document request type (letter vs checklist vs form) ────────────────────────
+
+def test_get_document_request_type_checklist():
+    """Checklist requests are typed as checklist, not letter."""
+    assert get_document_request_type("Generate a QC inspection checklist for demolition activities") == "checklist"
+    assert get_document_request_type("generate a checklist") == "checklist"
+    assert get_document_request_type("Create an inspection checklist") == "checklist"
+
+
+def test_get_document_request_type_form():
+    """Form requests are typed as form."""
+    assert get_document_request_type("generate a form") == "form"
+    assert get_document_request_type("Create a government property tracking form") == "form"
+
+
+def test_get_document_request_type_letter():
+    """Letter/serial/REA/RFI requests are typed as letter."""
+    assert get_document_request_type("Write a serial letter notifying the KO") == "letter"
+    assert get_document_request_type("draft a letter") == "letter"
+    assert get_document_request_type("write an REA") == "letter"
+    assert get_document_request_type("generate a stop-work order") == "letter"
+
+
+def test_get_document_request_type_none():
+    """Non-document queries return None."""
+    assert get_document_request_type("What does FAR 52.236-2 say?") is None
+    assert get_document_request_type("") is None
+    assert get_document_request_type(None) is None
+
+
+def test_is_document_request_only_letter():
+    """Only letter-type is_document_request True; checklist/form are False."""
+    assert is_document_request_query("Write a serial letter") is True
+    assert is_document_request_query("Generate a QC inspection checklist for demolition") is False
+    assert is_document_request_query("generate a form") is False
+
+
+@pytest.mark.asyncio
+async def test_checklist_query_routes_to_synthesis_not_letter():
+    """Generate a QC inspection checklist → regulation_search, is_document_request=False, document_request_type=checklist."""
+    result = await classify_query("Generate a QC inspection checklist for demolition activities")
+    assert result.document_request_type == "checklist"
+    assert result.is_document_request is False
+    # Demolition is a keyword; intent should be regulation_search (or clause if we had one).
+    assert result.intent in (QueryIntent.REGULATION_SEARCH, QueryIntent.CLAUSE_LOOKUP)
+
+
+@pytest.mark.asyncio
+async def test_letter_query_stays_document_request():
+    """Write/draft letter queries keep is_document_request=True and go to letter_drafter."""
+    result = await classify_query("Write a serial letter notifying the KO of delay")
+    assert result.document_request_type == "letter"
+    assert result.is_document_request is True

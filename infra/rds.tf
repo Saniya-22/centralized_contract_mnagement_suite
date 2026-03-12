@@ -136,11 +136,13 @@ resource "aws_secretsmanager_secret" "db" {
   }
 }
 
+# Secret keys (host, port, database, username, password) are referenced by ECS task definition in ecs.tf.
+# Keep in sync: container secrets valueFrom uses :key:: for each key below.
 resource "aws_secretsmanager_secret_version" "db" {
   secret_id = aws_secretsmanager_secret.db.id
   secret_string = jsonencode({
     host     = aws_db_instance.main.address
-    port     = aws_db_instance.main.port
+    port     = tostring(aws_db_instance.main.port)
     database = aws_db_instance.main.db_name
     username = aws_db_instance.main.username
     password = var.db_password
