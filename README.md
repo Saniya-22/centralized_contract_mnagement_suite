@@ -360,10 +360,21 @@ All settings loaded from `.env` via Pydantic `BaseSettings`.
 ### Unit Tests
 
 ```bash
-pytest                              # Run all 7 test modules
+pytest                              # Run all test modules
 pytest --cov=src --cov-report=html  # With coverage report
 pytest tests/test_query_classifier.py -v  # Specific module
 ```
+
+### API Test Suite
+
+REST and auth endpoints are covered in `tests/test_api.py` (and shared fixtures in `tests/conftest.py`). All API tests are marked with `@pytest.mark.api`.
+
+```bash
+pytest tests/test_api.py -v        # Run only API tests
+pytest -m api -v                   # Run all tests marked as API (same if only test_api has the marker)
+```
+
+Covers: root, health, docs/redoc, query (validation, success, 401/403, 429 rate limit, 503 orchestrator down), clause lookup (success, not found, 403), signup (201, 409, 422), login (200, 401), feedback (201, 403, 422), chat threads/history (200, 403), analytics summary (200, 403).
 
 ### End-to-End Smoke Test
 
