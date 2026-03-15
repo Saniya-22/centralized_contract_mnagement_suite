@@ -150,7 +150,7 @@ stemmer = PorterStemmer()
 
 # Tokenizer for OpenAI Embeddings
 TOKENIZER = tiktoken.get_encoding("cl100k_base")
-MAX_TOKEN_CAP = CHUNK_SIZE  # Use CHUNK_SIZE from config
+MAX_TOKEN_CAP = MAX_CHUNK_TOKENS
 
 # ---------------------------------------------------------
 # Utility Functions
@@ -457,6 +457,7 @@ _ANCHOR_RE = re.compile(
     r"^\s*(?:FAR|DFARS)?\s*(?:52\.\d{3}-\d+|252\.\d{3}-\d+|\d{2,3}\.\d{3}(?:-\d+)?)\b",
     re.IGNORECASE,
 )
+_EM385_ANCHOR_RE = re.compile(r"^\s*\d+-\d+\.", re.MULTILINE)
 
 
 def _is_anchor_chunk(text: str) -> bool:
@@ -467,9 +468,17 @@ def _is_anchor_chunk(text: str) -> bool:
     return bool(_ANCHOR_RE.match(first_line[0]))
 
 
+def _is_em385_anchor(text: str) -> bool:
+    """EM385 section start (e.g. 1-1., 1-2.) as anchor."""
+    first_line = (text or "").strip().splitlines()
+    if not first_line:
+        return False
+    return bool(_EM385_ANCHOR_RE.match(first_line[0]))
+
+
 def _keep_anchor_standalone(text: str) -> bool:
-    """In high-risk mode we do not keep tiny anchor-only chunks standalone."""
-    return KEEP_STANDALONE_ANCHOR_CHUNKS and _is_anchor_chunk(text)
+    """Keep clause/section-start chunks standalone (FAR/DFARS/EM385)."""
+    return KEEP_STANDALONE_ANCHOR_CHUNKS and (_is_anchor_chunk(text) or _is_em385_anchor(text))
 
 def _tail_overlap_by_tokens(parts: List[str], token_budget: int) -> List[str]:
     """Keep the tail of `parts` whose total token count fits the overlap budget."""
@@ -519,12 +528,47 @@ def _merge_small_text_chunks(chunks: List[str], min_tokens: int, max_tokens: int
         i += 1
     return merged
 
+def _split_on_subclause_boundaries(text: str) -> List[str]:
+    """Split FAR/DFARS block on line-start (a), (b), (1), (2), (i), (ii)."""
+    if not text or count_tokens(text) <= MAX_TOKEN_CAP:
+        return [text] if text else []
+    lines = text.splitlines()
+    subclause_start = re.compile(r"^\s*\(([a-z]|\d+|[ivx]+)\)\s")
+    blocks: List[str] = []
+    current: List[str] = []
+    for line in lines:
+        if subclause_start.match(line) and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+    return [b for b in blocks if b]
+
+
 def _split_on_clause_boundaries(text: str, source: str) -> List[str]:
-    """Pre-split large FAR/DFARS blocks on clause-like line starts."""
+    """Pre-split on clause/section boundaries. FAR/DFARS: clause numbers; EM385: 1-1., 1-2."""
     source = (source or "").upper()
-    if source not in {"FAR", "DFARS"}:
-        return [text]
     if count_tokens(text) < CLAUSE_SPLIT_TRIGGER_TOKENS:
+        return [text]
+
+    if source == "EM385":
+        lines = text.splitlines()
+        blocks = []
+        current = []
+        em385_section_start = re.compile(r"^\s*\d+-\d+\.\s")
+        for line in lines:
+            if em385_section_start.match(line) and current:
+                blocks.append("\n".join(current).strip())
+                current = [line]
+            else:
+                current.append(line)
+        if current:
+            blocks.append("\n".join(current).strip())
+        return [b for b in blocks if b]
+
+    if source not in {"FAR", "DFARS"}:
         return [text]
 
     lines = text.splitlines()
@@ -638,7 +682,7 @@ def create_chunks(text: str) -> List[str]:
             for sent in sentences:
                 sent_tokens = count_tokens(sent)
                 if (
-                    current_tokens + sent_tokens > TARGET_CHUNK_MAX_TOKENS
+                    current_tokens + sent_tokens > TARGET_CHUNK_TOKENS
                     and current_chunk
                 ):
                     chunks.append(" ".join(current_chunk))
@@ -649,15 +693,15 @@ def create_chunks(text: str) -> List[str]:
                 if sent_tokens > MAX_TOKEN_CAP:
                     logger.warning(f"Oversized sentence ({sent_tokens} tokens) found. Force-splitting.")
                     tokens = TOKENIZER.encode(sent)
-                    for j in range(0, len(tokens), TARGET_CHUNK_MAX_TOKENS):
-                        chunk_tokens = tokens[j : j + TARGET_CHUNK_MAX_TOKENS]
+                    for j in range(0, len(tokens), TARGET_CHUNK_TOKENS):
+                        chunk_tokens = tokens[j : j + TARGET_CHUNK_TOKENS]
                         chunks.append(TOKENIZER.decode(chunk_tokens))
                 else:
                     current_chunk.append(sent)
                     current_tokens += sent_tokens
             continue
 
-        split_threshold = min(MAX_TOKEN_CAP, TARGET_CHUNK_MAX_TOKENS)
+        split_threshold = min(MAX_TOKEN_CAP, TARGET_CHUNK_TOKENS)
         if current_tokens + para_tokens > split_threshold:
             if current_chunk:
                 chunks.append("\n\n".join(current_chunk))
@@ -678,8 +722,9 @@ def create_chunks(text: str) -> List[str]:
     return merged
 
 def create_section_aware_chunks(sections: List[Dict[str, Any]], source: str) -> List[Dict[str, Any]]:
-    """Processes sections into chunks while maintaining metadata hierarchy."""
+    """Processes sections into chunks; structure-first (clause/subclause), then size."""
     all_chunks: List[Dict[str, Any]] = []
+    src = (source or "").upper()
     for section in sections:
         text = section["full_text"].strip()
         if not text:
@@ -690,22 +735,31 @@ def create_section_aware_chunks(sections: List[Dict[str, Any]], source: str) -> 
         for block in split_blocks:
             block_tokens = count_tokens(block)
             if block_tokens <= MAX_TOKEN_CAP:
-                block_chunks = [block]
+                sub_blocks = [block]
+            elif src in {"FAR", "DFARS"}:
+                sub_blocks = _split_on_subclause_boundaries(block)
             else:
-                block_chunks = create_chunks(block)
-            block_chunks = _merge_small_text_chunks(block_chunks, TARGET_CHUNK_MIN_TOKENS, MAX_TOKEN_CAP)
+                sub_blocks = [block]
 
-            for chunk_text in block_chunks:
-                all_chunks.append({
-                    "text": chunk_text,
-                    "section_number": section["section_number"],
-                    "section_title": section["section_title"],
-                    "hierarchy_struct": section["hierarchy_struct"],
-                    "hierarchy_path": section["hierarchy_path"],
-                })
+            for sub_block in sub_blocks:
+                st = count_tokens(sub_block)
+                if st <= MAX_TOKEN_CAP:
+                    block_chunks = [sub_block]
+                else:
+                    block_chunks = create_chunks(sub_block)
+                block_chunks = _merge_small_text_chunks(block_chunks, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
+
+                for chunk_text in block_chunks:
+                    all_chunks.append({
+                        "text": chunk_text,
+                        "section_number": section["section_number"],
+                        "section_title": section["section_title"],
+                        "hierarchy_struct": section["hierarchy_struct"],
+                        "hierarchy_path": section["hierarchy_path"],
+                    })
     return _merge_chunk_records_within_section(
         all_chunks,
-        min_tokens=TARGET_CHUNK_MIN_TOKENS,
+        min_tokens=MIN_CHUNK_TOKENS,
         max_tokens=MAX_TOKEN_CAP,
     )
 
@@ -880,6 +934,9 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
         for i, page in enumerate(doc):
             content = extract_page_content(page, i + 1)
             full_text += content["text"] + "\n\n"
+            for table in content.get("tables", []):
+                if table.strip():
+                    full_text += "\n\n[Table]\n" + table.strip() + "\n\n"
 
         source = metadata.get("source", "UNKNOWN")
         sections = extract_structured_sections(full_text, source)

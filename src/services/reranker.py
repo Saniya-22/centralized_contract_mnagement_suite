@@ -46,10 +46,8 @@ def rerank(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         logger.info("[Reranker] Disabled (RERANKER_ENABLED=False). Using RRF scores.")
         return chunks
 
-    # ── Cap input to top 5 chunks for latency (RC-3) ──────────────────────────
-    # RRF already gave us a good initial sort. We only need GPT-4o-mini
-    # to reorder the very best candidates, not the long tail.
-    chunks = chunks[:5]
+    # ── Cap input to top 8 chunks so strong clause at 6–8 can be reranked (RC-3) ─
+    chunks = chunks[:8]
 
     # Build numbered preview
     numbered_previews = []

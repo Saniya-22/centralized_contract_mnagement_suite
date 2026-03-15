@@ -21,7 +21,14 @@ logger = logging.getLogger(__name__)
 
 class GovGigOrchestrator:
     """Main orchestrator for the GovGig multi-agent system."""
-    _CITATION_RE = re.compile(r"(\b(FAR|DFARS|EM\s*385)\b\s*\d+|\[[^\]]+\])", flags=re.IGNORECASE)
+    # FAR/DFARS/EM385 with Part or clause numbers; standalone clause numbers (52.236-2, 252.204-7012); bracketed refs
+    _CITATION_RE = re.compile(
+        r"\b(FAR|DFARS|EM\s*385)\b\s*(?:Part\s+)?\d+(?:\.\d+)?(?:-\d+)?"
+        r"|\b\d{2}\.\d{3}(?:-\d+)?\b"
+        r"|\b252\.\d{3}-\d+\b"
+        r"|\[[^\]]+\]",
+        re.IGNORECASE,
+    )
     _CLAIM_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
     _WORD_RE = re.compile(r"[a-z0-9][a-z0-9\-]{2,}")
     _STOPWORDS = {
@@ -34,15 +41,14 @@ class GovGigOrchestrator:
         "per", "via", "use", "using", "used", "being", "been", "more", "most",
     }
     _LOW_CONFIDENCE_LABEL = (
-        "Low confidence notice: Retrieved evidence may be incomplete for parts of this answer. "
-        "Please verify the cited clauses before final use.\n\n"
+        "Our system is still expanding its coverage here. Where it's critical, we recommend confirming with your contract or CO.\n\n"
     )
     _SAFETY_REVIEW_LABEL = "Safety review notice: {reason}\n\n"
     
     def __init__(self, checkpointer=None):
         logger.info("Initializing GovGigOrchestrator")
 
-        # Synthesizer: use gpt-4o-mini (SYNTHESIZER_MODEL) instead of gpt-4o.
+        # Synthesizer: uses SYNTHESIZER_MODEL (default gpt-4o).
         self.synthesizer_llm = ChatOpenAI(
             model=settings.SYNTHESIZER_MODEL,
             api_key=settings.OPENAI_API_KEY,
@@ -120,12 +126,13 @@ class GovGigOrchestrator:
         return units
 
     @classmethod
-    def _citation_coverage(cls, text: str) -> float:
+    def _citation_coverage(cls, text: str) -> tuple[float, bool]:
+        """Returns (score, has_claims). When no claim units, score=0.5 (neutral) and has_claims=False."""
         claims = cls._extract_claim_units(text)
         if not claims:
-            return 1.0
+            return (0.5, False)  # Not measured → neutral; don't fail on citation_bar
         cited = sum(1 for claim in claims if cls._CITATION_RE.search(claim))
-        return cited / len(claims)
+        return (cited / len(claims), True)
 
     @classmethod
     def _content_tokens(cls, text: str) -> set[str]:
@@ -147,8 +154,10 @@ class GovGigOrchestrator:
         doc_tokens = cls._content_tokens(" ".join(corpus))
         if not doc_tokens:
             return 0.0
-        overlap = len(response_tokens & doc_tokens)
-        return overlap / len(response_tokens)
+        overlap = response_tokens & doc_tokens
+        union = response_tokens | doc_tokens
+        # Jaccard: overlap/union so generic verbosity (many words not in docs) gets lower score
+        return len(overlap) / len(union) if union else 0.0
 
     def _assess_answer_quality(
         self,
@@ -157,7 +166,7 @@ class GovGigOrchestrator:
         evidence: dict[str, float],
         state: GovGigState,
     ) -> dict[str, float | bool]:
-        citation_coverage = self._citation_coverage(response_text)
+        citation_coverage, has_claims = self._citation_coverage(response_text)
         groundedness = self._groundedness_score(response_text, documents)
         evidence_avg = float(evidence.get("avg_norm", 0.0))
         is_clause_lookup = (
@@ -184,12 +193,12 @@ class GovGigOrchestrator:
             )
             quality_bar = 0.52
 
-        # Soft guardrails: annotate low confidence instead of blocking (tuned to reduce over-triggering)
+        # Soft guardrails: when we didn't measure citation (no claim units), don't fail on citation_bar
         low_confidence = bool(
             evidence.get("doc_count", 0.0) < min_docs
             or evidence_avg < 0.18
             or groundedness < 0.42
-            or citation_coverage < citation_bar
+            or (has_claims and citation_coverage < citation_bar)
             or quality_score < quality_bar
         )
         # Don't over-apply: high evidence = trust the answer, avoid notice

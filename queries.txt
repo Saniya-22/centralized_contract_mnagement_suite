@@ -1,109 +1,100 @@
 What bases are within Navy Region NW?
-Who is the founder of govgig?
+Who is the founder of GovGig?
 What did the GAO state on the status of the nation's four major naval shipyards?
-Provide me with detailed history of Puget Sound naval shipyard
-Core Federal Acquisition Regulations / FAR clauses / federal construction document list (long structured input)
-Write the KO a serial about the shutdown, notifying them of potential impacts, include excusable delay clauses, and DFARS 252.236-7000
-We are building a barracks project at camp Pendleton and have uncovered unexploded ordnance. What do I do and write me a serial letter notifying the KO. Include FAR excusable delay, differing site conditions
-Is the document generator working yet?
-Why is the document generator still under construction?
-Write a serial letter notifying the ko of the wildfire impact
+Provide me with detailed history of Puget Sound Naval Shipyard.
 What is INDOPACOM?
 What does OCONUS mean?
-How often should the superintendent update drawings?
-What are redline drawings?
-Review the FAR or DFARS clauses and identify risks related to construction scheduling
+What is SIOP?
+What is DFARS?
+What is a serial letter?
+What is the difference between limited rights, government purpose rights, and unlimited rights?
+Review the FAR or DFARS clauses and identify risks related to construction scheduling.
 What is a concurrent delay?
-As a Project Manager, analyze the far clause interpretation requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the contract compliance requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the commissioning requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the punchlist requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the warranties requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the inspections requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the differing site conditions requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the delays requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-Add DFARS clause 252.236-7000 into the letter.
-Write a delay letter to Navfac regarding an outage disapproval and the delay, include the default FAR clause
-As a Project Manager, analyze the pricing adjustments requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the change orders requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the safety requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-What clauses are covered by the Christian Doctrine?
-Why would a general contractor submit an REA and not a change order to the government?
-Document use and possession per FAR for benefit occupancy.
 What is the difference between a change order and an REA?
-If there is a safety incident, what does the government need from the general contractor?
+What clauses are covered by the Christian Doctrine?
+What FAR clauses can be the basis of an REA?
+What certification do I need to put on my claim?
+What certification do I need to put on my REA?
+What FAR clause applies to differing site conditions?
+What FAR clause relates to professional services?
+What documents do I need for a novation agreement?
+What documents must I review immediately after federal construction contract award?
+What contract clauses should I review before project mobilization?
+What actions must occur between contract award and the notice to proceed?
+What should I verify regarding bonding requirements after award?
+How do I confirm the contract scope aligns with the solicitation and award documents?
 How do I calculate my daily rate?
 What is allowable for Field Office Overhead?
-How often can a general contractor submit billing?
-Can the government designate anyone as a contracting officer representative?
 What dollar value do I need to certify my REA?
-If the government's contracting officer representative is not qualified, what can the general contractor do?
-Can the contracting officer adjust the schedule?
-What counts as justification for the contracting officer to change the schedule?
-My prime isn't paying me. What can I do?
-Draft a letter to the KO regarding 52.242-5 stating the prime contractor is not paying.
-What should I verify regarding bonding requirements after award?
-How often do I need to send in daily reports?
-During excavation I encountered a duct bank that wasn't on any government drawings. Can I get reimbursed for the extra costs of removing it?
+What is the reasonable withholdings on an invoice?
+Are professional services to help with REAs allowable costs?
+What data do I need to support an REA?
 If the contracting officer and I do not agree on the legitimacy of a change order, what are the next steps?
 How do you appeal an unsatisfactory CPARS?
-What is the difference between termination for default and termination for convenience and what are the impacts of both to the contractor?
-What is the reasonable withholdings on an invoice?
-What documents do I need for a novation agreement?
-How do I confirm the contract scope aligns with the solicitation and award documents?
-What is the difference between product substitution and product variance?
-I have received an offer to buy my company. What impact will that have on my government contracts?
-What contract clauses should I review before project mobilization?
-Add additional information that the time and cost impacts are unknown at this time.
-What is the difference between limited rights, government purpose rights, and unlimited rights?
-Generate a government property tracking form
-What documents must I review immediately after federal construction contract award?
-Draft me an REA for compensable delay
-If I have concurrent compensable and non-compensable days of delay, can I be paid for the compensable days?
-What FAR clauses can be the basis of an REA?
-What data do I need to support an REA?
-Can you recommend me a Government contracts attorney?
-Export to a word document
-I think the Government has messed up the small business set aside. What should I do?
-We were digging a footing and ran into an unexpected gas line that isnt on the drawings. now what?
-Write me an RFI, in standard NAVFAC form, for this issue
-Rephrase answer to include all applicable FAR/DFAR/and EM 385 requirements
+Can I appeal my CPARS rating?
 What are my rights as a contractor during a debrief?
+What's the deadline for filing a protest?
+The government is taking too long to respond to my claim. What can I do?
+My prime isn't paying me. What can I do?
+Can the government force the general contractor to use specific subcontractors?
+If the government's COR is not qualified, what can the contractor do?
+Can contract specialists sign contract modifications in place of the contracting officer?
+What are redline drawings?
+How often should the superintendent update drawings?
+How often can a general contractor submit billing?
+How often do I need to send in daily reports?
+What is the measured mile?
+If there is a safety incident, what does the government need from the contractor?
+Per EM385, when is hot work permitted?
+We had a fire overnight at the site, what should I do?
+During excavation I encountered a duct bank not on drawings. Can I get reimbursed?
+We discovered an oil tank not on drawings. What do I do next?
+We were digging a footing and ran into an unexpected gas line not on drawings. Now what?
+What do we do if a vendor cannot match the specifications?
+Are there risks to the contractor for submitting a substitution request?
+What does a superintendent do on a federal construction project?
+What does the project manager do on a federal construction project?
+What are the roles and responsibilities of a federal construction quality control manager?
+As a Project Manager, analyze compliance requirements during the pre-award phase.
+As a Project Manager, analyze commissioning requirements during the pre-award phase.
+As a Project Manager, analyze punchlist requirements during the pre-award phase.
+As a Project Manager, analyze inspections requirements during the pre-award phase.
+As a Project Manager, analyze delays requirements during the pre-award phase.
+As a Project Manager, analyze pricing adjustments during the pre-award phase.
+As a Project Manager, analyze change order requirements during the pre-award phase.
+As a Project Manager, analyze safety requirements during the pre-award phase.
+As a Project Manager, analyze submittal requirements during the pre-award phase.
+As a Project Manager, analyze RFI requirements during the pre-award phase.
+As a Project Manager, analyze safety requirements during the post-award phase.
+As a Superintendent, analyze inspection requirements during claims & disputes.
+As a Superintendent, analyze pricing adjustments during claims & disputes.
+Write a serial letter notifying the KO of a wildfire impact.
+Write a delay letter to NAVFAC regarding outage disapproval.
+Write a delay letter including FAR default clause.
+Draft a letter to the KO regarding unpaid subcontractor (FAR 52.242-5).
+Write a serial letter notifying KO of unexploded ordnance discovery.
+Draft a letter seeking an REA for badge delay.
+Draft an REA for compensable delay.
+Draft a letter regarding outage denial affecting critical path.
+Add DFARS clause 252.236-7000 into the letter.
+Add FAR default clause language into the letter.
+Write an RFI in standard NAVFAC format.
 Generate a QC dashboard for project quality performance.
-Night-shift lighting levels are below 50 foot-candles. Write the dual safety/quality stop-work order.
+Generate a QC inspection checklist for demolition activities.
 Generate a QC checklist for conduit installation.
 Generate a checklist for verifying masonry reinforcement placement.
-Generate a QC inspection checklist for demolition activities.
-Identify the quality-related deliverables required in Division 00 before construction begins.
-How should I structure the serial letter?
-What is DFARS?
-What is SIOP?
-What is a serial letter?
-Which FAR clause applies to differing site conditions?
-What is the FAR clause that relates to professional services?
-Show me the standard project cost ranges for a government solicitation.
-What is FAR 36.204?
-What are the roles and responsibilities of a federal construction quality control manager?
-What do we do if a vendor cannot match the specifications?
-As a Superintendent, analyze the inspections requirements during the claims & disputes phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Superintendent, analyze the pricing adjustments requirements during the claims & disputes phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-When can the contracting officer not change the schedule?
-I was just issued a job as a project manager, post award, for a federal DBB construction job through NAVFAC. provide the first 10 steps
+Draft an Initial Phase inspection report verifying HVAC components.
 How do I upload submittal documents?
-Per EM385, when is a hot work permitted?
-I want to upload the specifications
-I want to load the submittal registry
-Is there a requirement to advise the government if a change has been made to a qc plan?
-Are there qc program requirements in the FAR, DFAR, or EM385?
-What is a PPI?
-As a Project Manager, analyze the submittals requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the rfis requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
+How do I upload specifications?
+I want to load the submittal registry.
+How do I access the process guidance agent?
+Why can't I access tools?
 Where do I find my insurance information?
-We had a fire overnight at the site, what should I do?
-Draft an Initial Phase inspection report verifying the first installation of Division 23 – HVAC components.
-As a Estimator, analyze the rfis requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-As a Project Manager, analyze the safety requirements during the post-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
-Which FAR clause applies to differing site conditions?
-We have discovered an oil tank that is not on the drawings, what do I do next?
-What does the project manager do on a federal construction project?
-Test these queries
+Is the document generator working yet?
+What is a PPI?
+What documents should I prepare for the government preconstruction conference?
+I was issued a federal DBB job as PM – what are the first 10 steps?
+Export to a Word document.
+Generate a government property tracking form.
+What is the difference between product substitution and product variance?
+If tariffs raise material costs after award, can contractor receive cost modification?

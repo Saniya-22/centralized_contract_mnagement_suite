@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     REGULATIONS_NAMESPACE: str = "public-regulations"
 
     # Vector Search
-    DENSE_TOP_K: int = 10
+    DENSE_TOP_K: int = 15
     SPARSE_TOP_K: int = 10
     HYBRID_DENSE_WEIGHT: float = 0.7
     HYBRID_SPARSE_WEIGHT: float = 0.3
@@ -53,17 +53,17 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = "gpt-4o-mini"           # Model used for LLM reranking
     RERANKER_ENABLED: bool = True                 # Set False to skip LLM rerank, use RRF only
     RAG_TOKEN_LIMIT: int = 2400                   # Max tokens assembled into context for faster speed
-    RETRIEVAL_TOP_K: int = 6                      # Primary retrieval size for regulation_search path
-    REFLECTION_THRESHOLD: float = 0.35            # Heuristic confidence threshold before self-healing
+    RETRIEVAL_TOP_K: int = 12                     # Primary retrieval size for regulation_search path
+    REFLECTION_THRESHOLD: float = 0.50            # Heuristic confidence threshold before self-healing (stability + reflection trigger)
     REFLECTION_HEALING_MARGIN: float = 0.05       # Skip retries for near-threshold borderline scores
     SELF_HEALING_SEARCH_K: int = 3                # Per expanded query search depth
-    SELF_HEALING_MAX_QUERIES: int = 1             # Max expanded queries to execute
+    SELF_HEALING_MAX_QUERIES: int = 2             # Max expanded queries to execute
     SELF_HEALING_MAX_DOCS: int = 4                # Max additional docs added from self-healing
     MAX_DOC_CHARS_FOR_SYNTHESIS: int = 1200       # Per-document content trim before prompt assembly
     # LLM Models (separate concerns)
     # MODEL_NAME:       used for the DataRetrieval tool-selector fallback
-    # SYNTHESIZER_MODEL: used by _synthesize_response — gpt-4o-mini is 3-5x faster
-    SYNTHESIZER_MODEL: str = "gpt-4o-mini"        # Fast synthesis model
+    # SYNTHESIZER_MODEL: used by _synthesize_response
+    SYNTHESIZER_MODEL: str = "gpt-4o"             # Synthesizer model (quality)
     
     # LangGraph
     MAX_ITERATIONS: int = 10

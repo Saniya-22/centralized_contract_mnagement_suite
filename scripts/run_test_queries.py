@@ -11,12 +11,14 @@ Usage:
   python scripts/run_test_queries.py --api              # smoke subset, via API
   python scripts/run_test_queries.py --list FILE -o out.txt
   python scripts/run_test_queries.py --api --list queries.txt -o results.txt
+  python scripts/run_test_queries.py --api --list queries.txt -o results.csv --csv
 
-Output: query, path, docs, confidence, reflection_triggered (if API), and first 300 chars of answer.
+Output: with -o only, query/path/docs/confidence and first 300 chars of answer. With --csv, full responses in CSV.
 """
 
 import argparse
 import asyncio
+import csv
 import json
 import os
 import sys
@@ -121,9 +123,35 @@ def _post_query(base_url: str, token: str, query: str) -> dict:
         raise RuntimeError(f"Query failed ({e.code}): {body.get('detail', e.reason)}")
 
 
-def run_queries_via_api(queries, base_url: str, email: str, password: str, verbose=True, out_path=None):
+def _row_from_result(index: int, query: str, result: dict) -> dict:
+    """Build a single result row (for CSV) from API/orchestrator result."""
+    agent_path = result.get("agent_path", [])
+    path = _path_summary(agent_path)
+    docs = len(result.get("documents", []))
+    conf = result.get("confidence", "")
+    if conf != "unknown" and conf is not None:
+        conf = str(conf)
+    else:
+        conf = ""
+    refl = _reflection_triggered(agent_path)
+    answer = (result.get("response") or "").strip()
+    low = result.get("low_confidence")
+    return {
+        "index": index,
+        "query": query,
+        "response": answer,
+        "path": path,
+        "doc_count": docs,
+        "confidence": conf,
+        "reflection_triggered": "yes" if refl else "no",
+        "low_confidence": "yes" if low else "no",
+    }
+
+
+def run_queries_via_api(queries, base_url: str, email: str, password: str, verbose=True, out_path=None, csv_mode=False):
     token = _get_token(base_url, email, password)
     lines = []
+    rows = []
     for i, q in enumerate(queries, 1):
         try:
             result = _post_query(base_url, token, q)
@@ -140,6 +168,8 @@ def run_queries_via_api(queries, base_url: str, email: str, password: str, verbo
                 print(line)
                 print()
             lines.append(line)
+            if csv_mode:
+                rows.append(_row_from_result(i, q, result))
             # Rate limit: API often 10/min
             if len(queries) > 15:
                 time.sleep(6.5 / 10.0)
@@ -149,11 +179,23 @@ def run_queries_via_api(queries, base_url: str, email: str, password: str, verbo
                 print(line)
                 print()
             lines.append(line)
+            if csv_mode:
+                rows.append({
+                    "index": i, "query": q, "response": f"ERROR: {type(e).__name__}: {e}",
+                    "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no", "low_confidence": "no",
+                })
 
     if out_path:
-        with open(out_path, "w") as f:
-            f.write("\n\n".join(lines))
-        print(f"Wrote {len(lines)} results to {out_path}")
+        if csv_mode and rows:
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["index", "query", "response", "path", "doc_count", "confidence", "reflection_triggered", "low_confidence"])
+                w.writeheader()
+                w.writerows(rows)
+            print(f"Wrote {len(rows)} results (full responses) to {out_path}")
+        else:
+            with open(out_path, "w") as f:
+                f.write("\n\n".join(lines))
+            print(f"Wrote {len(lines)} results to {out_path}")
     return lines
 
 
@@ -172,34 +214,49 @@ async def _run_one(orchestrator, q, i, verbose):
     if verbose:
         print(line)
         print()
-    return line
+    return line, result
 
 
-def run_queries_direct(queries, verbose=True, out_path=None):
+def run_queries_direct(queries, verbose=True, out_path=None, csv_mode=False):
     from src.agents.orchestrator import GovGigOrchestrator
 
     orchestrator = GovGigOrchestrator()
     lines = []
+    rows = []
 
     async def _run_all():
-        nonlocal lines
+        nonlocal lines, rows
         for i, q in enumerate(queries, 1):
             try:
-                line = await _run_one(orchestrator, q, i, verbose)
+                line, result = await _run_one(orchestrator, q, i, verbose)
                 lines.append(line)
+                if csv_mode:
+                    rows.append(_row_from_result(i, q, result))
             except Exception as e:
                 line = f"[{i}] ERROR: {q[:80]}\n  {type(e).__name__}: {e}"
                 if verbose:
                     print(line)
                     print()
                 lines.append(line)
+                if csv_mode:
+                    rows.append({
+                        "index": i, "query": q, "response": f"ERROR: {type(e).__name__}: {e}",
+                        "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no", "low_confidence": "no",
+                    })
 
     asyncio.run(_run_all())
 
     if out_path:
-        with open(out_path, "w") as f:
-            f.write("\n\n".join(lines))
-        print(f"Wrote {len(lines)} results to {out_path}")
+        if csv_mode and rows:
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["index", "query", "response", "path", "doc_count", "confidence", "reflection_triggered", "low_confidence"])
+                w.writeheader()
+                w.writerows(rows)
+            print(f"Wrote {len(rows)} results (full responses) to {out_path}")
+        else:
+            with open(out_path, "w") as f:
+                f.write("\n\n".join(lines))
+            print(f"Wrote {len(lines)} results to {out_path}")
     return lines
 
 
@@ -212,6 +269,7 @@ def main():
     ap.add_argument("--all", action="store_true", help="Run extended query list")
     ap.add_argument("--list", metavar="FILE", help="Run queries from file (one per line)")
     ap.add_argument("-o", "--out", metavar="FILE", help="Write results to file")
+    ap.add_argument("--csv", action="store_true", help="Write full responses in CSV (use with -o)")
     ap.add_argument("-q", "--quiet", action="store_true", help="Only print summary to --out")
     args = ap.parse_args()
 
@@ -236,9 +294,10 @@ def main():
             password=args.password,
             verbose=not args.quiet,
             out_path=args.out,
+            csv_mode=args.csv,
         )
     else:
-        run_queries_direct(queries, verbose=not args.quiet, out_path=args.out)
+        run_queries_direct(queries, verbose=not args.quiet, out_path=args.out, csv_mode=args.csv)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,60 @@
+What documentation needs to be provided for off site storage of materials?
+What bases are within Navy Region NW?
+Who is the founder of GovGig?
+What did the GAO state on the status of the nation's four major naval shipyards?
+Provide me with detailed history of Puget Sound Naval Shipyard.
+List the core Federal Acquisition Regulations, construction clauses, safety and labor compliance documents, federal design standards, contract administration guides, forms, and dispute references used in federal construction.
+We are building a barracks project at Camp Pendleton and have uncovered unexploded ordnance. What should we do and write a serial letter notifying the contracting officer including FAR clauses for excusable delay and differing site conditions.
+Is the document generator working yet?
+Why is the document generator still under construction?
+Review the FAR or DFARS clauses and identify risks related to construction scheduling.
+What is a concurrent delay?
+As a Project Manager, analyze the commissioning requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
+As a Project Manager, analyze the punchlist requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
+Write a delay letter to NAVFAC regarding an outage disapproval and the delay including the default FAR clause.
+Why would a general contractor submit an REA and not a change order to the government?
+What is the difference between a change order and an REA?
+If there is a safety incident, what does the government need from the general contractor?
+How do I calculate my daily rate?
+My prime contractor is not paying me. What can I do?
+Draft a letter to the contracting officer regarding FAR 52.242-5 stating that the prime contractor is not paying.
+What should I verify regarding bonding requirements after contract award?
+If the contracting officer and I do not agree on the legitimacy of a change order, what are the next steps?
+How do you appeal an unsatisfactory CPARS?
+What documents do I need for a novation agreement?
+What contract clauses should I review before project mobilization?
+Are professional services to help with REAs allowable costs?
+As a Project Executive, analyze the RFI requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance with contract requirements.
+Can I appeal my CPARS rating?
+What should I prepare for the government preconstruction conference?
+What certification do I need to put on my REA?
+Add the FAR default clause to a letter and include DFARS clause 252.236-7000.
+There was a delay in getting badges for my employees. Draft a letter to the contracting officer seeking an REA.
+The government has denied an outage request on the critical path. What should I do and write a letter regarding delays and impacts.
+Add language indicating that time and cost impacts are unknown at this time and include serial letter numbering.
+Generate a government property tracking form.
+What FAR clauses can be the basis of an REA?
+Can you recommend a government contracts attorney?
+Export the response to a Word document.
+We were digging a footing and ran into an unexpected gas line not shown on the drawings. What should we do?
+What is the deadline for filing a protest?
+What are the roles and responsibilities of a federal construction quality control manager?
+What should we do if a vendor cannot match the specifications?
+Write an RFI in standard NAVFAC form for this issue.
+Rephrase the answer to include all applicable FAR, DFARS, and EM-385 requirements.
+What are my rights as a contractor during a debrief?
+How do I access the process guidance agent?
+I was just issued a job as a project manager for a federal design-bid-build construction project through NAVFAC. Provide the first 10 steps.
+How do I upload submittal documents?
+How can I upload the specifications?
+How do I load the submittal registry?
+What is a PPI?
+As a Project Manager, analyze submittal requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance.
+As a Project Manager, analyze RFI requirements during the pre-award phase of a federal construction project and recommend actions to ensure compliance.
+What does a project manager do on a federal construction project?
+As a Project Manager, analyze safety requirements during the post-award phase of a federal construction project and recommend actions to ensure compliance.
+We discovered an oil tank that is not on the drawings. What do we do next?
+What is SIOP?
+Which FAR clause applies to differing site conditions?
+What FAR clause relates to professional services?
+Show me the standard project cost ranges for a government solicitation.
