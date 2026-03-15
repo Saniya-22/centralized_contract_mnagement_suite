@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from jose import jwt
 from datetime import datetime, timedelta
 from src.config import settings

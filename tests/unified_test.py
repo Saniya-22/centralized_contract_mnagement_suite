@@ -56,7 +56,12 @@ def run_benchmark():
         # Get token
         try:
             import subprocess
-            token = subprocess.check_output(["./venv/bin/python3", "gen_test_token.py"]).decode().strip()
+            import os
+            _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            token = subprocess.check_output(
+                [os.path.join(_root, "venv", "bin", "python3"), "scripts/gen_test_token.py"],
+                cwd=_root,
+            ).decode().strip()
             headers = {"Authorization": f"Bearer {token}"}
         except Exception as e:
             print(f"⚠️  Could not generate token: {e}")

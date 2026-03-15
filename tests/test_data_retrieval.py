@@ -137,7 +137,7 @@ async def test_agent_run_skips_healing_for_borderline_confidence(data_retrieval_
     data_retrieval_agent.reflection_manager.check_quality = Mock(
         return_value={
             "passed": False,
-            "score": 0.33,  # below threshold, but within healing margin
+            "score": 0.46,  # borderline band [0.45, 0.50): below threshold, within healing margin → skip healing
             "reason": "Low retrieval confidence.",
         }
     )

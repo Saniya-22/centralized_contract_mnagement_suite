@@ -60,7 +60,7 @@ cd "$PROJECT_DIR"
 # Login to ECR
 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URL
 
-# Build image (includes pre-indexed data in data/ folder)
+# Build image (no pre-indexed data in image; run ingestion after deploy to populate RDS)
 docker build -t $ECR_REPO:$IMAGE_TAG .
 
 # Tag and push

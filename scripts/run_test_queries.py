@@ -10,8 +10,8 @@ Usage:
   python scripts/run_test_queries.py                    # smoke subset, direct
   python scripts/run_test_queries.py --api              # smoke subset, via API
   python scripts/run_test_queries.py --list FILE -o out.txt
-  python scripts/run_test_queries.py --api --list queries.txt -o results.txt
-  python scripts/run_test_queries.py --api --list queries.txt -o results.csv --csv
+  python scripts/run_test_queries.py --api --list scripts/queries.txt -o results/results.txt
+  python scripts/run_test_queries.py --api --list scripts/queries.txt -o results/results.csv --csv
 
 Output: with -o only, query/path/docs/confidence and first 300 chars of answer. With --csv, full responses in CSV.
 """

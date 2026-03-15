@@ -10,7 +10,7 @@ This document provides a detailed analysis of the repository's state, performanc
 
 ## Performance Benchmarks
 
-The following results were obtained from the `unified_test.py` E2E benchmark suite:
+The following results were obtained from the `tests/unified_test.py` E2E benchmark suite:
 
 | Test Case | Query | Status | Latency |
 | :--- | :--- | :--- | :--- |

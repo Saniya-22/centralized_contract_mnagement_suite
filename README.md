@@ -1,69 +1,25 @@
 # GovGig AI - Python LangGraph Backend
 
-Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powered by LangGraph multi-agent orchestration, hybrid vector search (dense + sparse), and FastAPI.
-
-## System Capabilities
-
-| Feature | Status | Details |
-|---------|--------|---------|
-| **Multi-Agent Orchestration** | Supported | LangGraph `StateGraph` with Router -> DataRetrieval -> Synthesizer |
-| **Deterministic Query Classifier** | Supported | Zero-LLM routing: `clause_lookup`, `regulation_search`, `out_of_scope` |
-| **Hybrid Retrieval (Dense + Sparse)** | Supported | OpenAI `text-embedding-3-small` + BM25/FTS fused via RRF |
-| **Reflection & Self-Healing** | Supported | Auto critique -> query expansion -> re-search on low-confidence results |
-| **Optional LLM Reranker** | Supported | GPT-4o-mini relevance scoring (toggle via `RERANKER_ENABLED`) |
-| **JWT Authentication** | Supported | All query endpoints secured with Bearer token |
-| **In-Memory Rate Limiter** | Supported | 10 req/min per user (sliding window) |
-| **Conversation Persistence** | Supported | LangGraph state in PostgreSQL via `PostgresSaver` |
-| **API Response Caching** | Supported | SHA-256 hashed, scoped by user + thread, 24h TTL |
-| **Sovereign-AI Guardrails** | Supported | Post-synthesis safety verdict (`allow`/`warn`/`block`, soft or hard mode) |
-| **Letter-Drafting Agent** | Supported | Full draft (serial letter, REA, RFI) when user requests a **letter-type** document; grounded in retrieved regulations |
-| **Document-Type Routing** | Supported | Letter → letter_drafter; checklist/form → synthesis (retrieval + checklist-style answer) |
-| **Out-of-Scope (OOS)** | Supported | Direct LLM call: brief helpful answer + polite scope notification (FAR/DFARS/EM385 specialist) |
-| **Direct Clause Lookup** | Supported | DB-direct fetch for exact clause references (no LLM) |
-| **Quality Metrics** | Supported | `citation_coverage`, `groundedness_score`, `evidence_score`, `quality_score` |
-| **Streamlit Dashboard** | Supported | Glassmorphism UI with real-time performance gauges |
-| **REST + WebSocket APIs** | Supported | Non-streaming POST + streaming WS |
+Regulatory RAG for **FAR**, **DFARS**, and **EM 385-1-1**: LangGraph multi-agent orchestration (router → retrieval → synthesis), hybrid vector search (dense + sparse), JWT-secured FastAPI, and optional Streamlit dashboard. See `docs/` for full capability list and design docs.
 
 ## Architecture
 
 ```text
 ┌──────────────────────────────────────────────────┐
 │              FastAPI Application                  │
-│   REST: POST /api/v1/query                       │
-│   WS: /ws/chat    GET: /api/v1/clause/{ref}      │
+│   REST: POST /api/v1/query   WS: /ws/chat        │
 │   Auth: JWT  │  Rate Limit: 10 req/min/user      │
 └───────────────────────┬──────────────────────────┘
-                        │
                         ▼
 ┌──────────────────────────────────────────────────┐
 │          GovGigOrchestrator (LangGraph)           │
-│                                                   │
-│  ┌──────────────┐    ┌────────────────────────┐  │
-│  │   Router     │───>│   DataRetrievalAgent   │  │
-│  │ (Deterministic│    │                        │  │
-│  │  Classifier) │    │  VectorSearch (hybrid)  │  │
-│  └──────────────┘    │  DirectClauseLookup     │  │
-│        │             │  ReflectionRAG          │  │
-│   out_of_scope       └───────────┬────────────┘  │
-│   -> OOS LLM                    │               │
-│     (answer + polite    document_request_type?   │
-│      notification)      ├─letter──> LetterDrafter│
-│                         └─else───> Synthesizer   │
-│                      ┌────────────────────────┐  │
-│                      │ LetterDrafter/Synthesizer│  │
-│                      │  GPT-4o-mini + Quality  │  │
-│                      │  + SovereignGuard        │  │
-│                      └────────────────────────┘  │
-└──────────────────────────────────────────────────┘
-                        │
+│  Router → DataRetrieval (hybrid + reflection)    │
+│  → LetterDrafter / Synthesizer + SovereignGuard   │
+└───────────────────────┬──────────────────────────┘
                         ▼
 ┌──────────────────────────────────────────────────┐
 │            PostgreSQL + pgvector                  │
-│  * embeddings_dense (OpenAI 1536-dim)            │
-│  * FTS (tsvector + ts_rank_cd)                   │
-│  * RRF fusion (k=60)                             │
-│  * LangGraph checkpointer (conversation state)   │
-│  * Response cache (SHA-256, 24h TTL)             │
+│  embeddings_dense, FTS, RRF, checkpointer, cache │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -71,345 +27,101 @@ Regulatory document RAG system for **FAR**, **DFARS**, and **EM 385-1-1** powere
 
 ```text
 govgig-feature-python-ai-assistant/
-├── src/
-│   ├── agents/
-│   │   ├── base.py              # BaseAgent ABC (non-streaming LLM)
-│   │   ├── data_retrieval.py    # Retrieval agent + reflection integration
-│   │   ├── orchestrator.py      # LangGraph StateGraph orchestrator
-│   │   └── prompts.py           # System prompts for all agents
-│   ├── api/
-│   │   ├── main.py              # FastAPI app (REST + WS + rate limiter)
-│   │   └── auth.py              # JWT validation middleware
-│   ├── db/
-│   │   ├── connection.py        # PostgreSQL pool + CheckpointerManager
-│   │   └── queries.py           # Vector search, RRF, clause lookup, caching
-│   ├── reflection/
-│   │   ├── critique.py          # RetrievalCritique (confidence + reg mismatch)
-│   │   ├── expansion.py         # QueryExpansion (GPT-4o-mini, async)
-│   │   └── manager.py           # ReflectionManager coordinator
-│   ├── services/
-│   │   ├── reranker.py          # GPT-4o-mini LLM reranker (optional)
-│   │   └── sovereign_guard.py   # Post-synthesis safety guardrails
-│   ├── state/
-│   │   └── graph_state.py       # GovGigState (TypedDict + operator.add reducers)
-│   ├── tools/
-│   │   ├── vector_search.py     # VectorSearchTool (hybrid dense+sparse)
-│   │   ├── query_classifier.py  # Deterministic intent classifier (zero LLM)
-│   │   └── llm_tools.py         # Embedding, tokenization, formatting utils
-│   ├── config.py                # Pydantic Settings (all env vars)
+├── src/                        # Main application (FastAPI, LangGraph, RAG)
+│   ├── agents/                 # Orchestrator, data_retrieval, prompts
+│   ├── api/                    # FastAPI app, auth
+│   ├── db/                     # Pool, vector search, queries, cache
+│   ├── reflection/             # Critique, query expansion, self-healing
+│   ├── services/               # Reranker, sovereign_guard
+│   ├── state/                  # Graph state (TypedDict)
+│   ├── tools/                  # Vector search, query_classifier, llm_tools
+│   ├── scripts/                # DB setup: SQL + legacy Node (initDB, ingestRegulations, etc.)
+│   ├── config.py               # App config (Pydantic Settings, env)
 │   └── requirements.txt
-├── ingest_python/
-│   ├── pipeline.py              # PDF ingestion: extract -> chunk -> embed -> store
-│   ├── config.py                # Ingestion configuration
+├── ingest_python/              # PDF ingestion: chunk → embed → store
+│   ├── config.py               # Ingestion config (env: chunk sizes, DATABASE_URL, etc.)
+│   ├── pipeline.py
 │   └── parsing/
-│       ├── classifier.py        # Line-level structural classification
-│       └── rules.py             # Regex patterns for FAR/DFARS/EM385
-├── dashboard/
-│   └── app.py                   # Streamlit glassmorphism dashboard
-├── tests/                       # Pytest (query_classifier, orchestrator, api, etc.)
-├── scripts/                     # deploy.sh, quality_gate, run_test_queries, migrations
-├── infra/                       # Terraform: VPC, ECS, ALB, RDS, ECR, Secrets (AWS)
-├── src/scripts/                 # setupRegulationsDB.sql, setupAuthDB.sql, setupChatHistory.sql
-├── unified_test.py              # End-to-end smoke test
-├── gen_test_token.py            # JWT token generator for testing
-├── run.sh                       # Dev environment setup + server start
-├── run_dashboard.sh             # Streamlit dashboard launcher
-├── Dockerfile                   # Production container
-└── docker-compose.yml           # Full-stack deployment
+├── dashboard/                  # Streamlit dashboard
+├── scripts/                    # Python tooling: run_test_queries, dedup_embeddings,
+│                               # quality_gate, benchmark_latency, gen_test_token, migrations
+├── tests/                      # Pytest + tests/unified_test.py (E2E smoke)
+├── docs/                       # Architecture and design docs
+├── results/                    # Test run outputs (gitignored)
+├── infra/                      # Terraform (AWS)
+├── run.sh, run_dashboard.sh
+├── Dockerfile, docker-compose.yml
+└── .env.example
 ```
+
+**Notes:**
+- **Config:** App config = `src/config.py` (Pydantic). Ingestion config = `ingest_python/config.py` (env vars).
+- **Scripts:** Root `scripts/` = Python tooling (tests, quality gate, latency benchmark). `src/scripts/` = DB setup (SQL + legacy Node).
+- **Stack:** Primary API is FastAPI (Python). Node in `src/scripts/` is for DB/legacy setup only.
 
 ## Prerequisites
 
 - **Python** 3.11+
-- **PostgreSQL** 14+ with `pgvector` extension
-- **OpenAI API Key** - for embeddings (`text-embedding-3-small`) and synthesis (`gpt-4o-mini`)
+- **PostgreSQL** 14+ with pgvector
+- **OpenAI API key** (embeddings + synthesis)
 
 ## Quick Start
 
-### 1. Setup and Run (recommended)
-
 ```bash
-# One-command setup: creates venv, installs deps, starts server
+# One-command setup and run
 bash run.sh
 ```
 
-This script handles Python version check, virtual environment, dependency installation, `.env` validation, and starts Uvicorn on port 8000.
-
-### 2. Manual Setup
+Manual:
 
 ```bash
 python3.11 -m venv venv
 source venv/bin/activate
 pip install -r src/requirements.txt
-
-cp .env.example .env
-# Edit .env with your values (see Configuration section)
-
+cp .env.example .env   # Edit with OPENAI_API_KEY, PG_PASSWORD, JWT_SECRET_KEY
 python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-### 3. Verify
+Verify:
 
 ```bash
-# Health check
 curl http://localhost:8000/api/v1/health
-
-# Generate a test JWT token
-python gen_test_token.py
-
-# Query with token
-curl -X POST http://localhost:8000/api/v1/query \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "What are the requirements for small business set-asides in FAR?"}'
+python scripts/gen_test_token.py   # Use token in Authorization header
+python tests/unified_test.py       # E2E smoke (server must be running)
 ```
 
-### 4. Run Dashboard
+Dashboard: `bash run_dashboard.sh` (Streamlit on port 8501).
 
-```bash
-bash run_dashboard.sh
-# Opens Streamlit at http://localhost:8501
-```
+## API Summary
 
-### 5. API Documentation
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-## API Endpoints
-
-### `GET /api/v1/health`
-
-Returns system status (database, orchestrator).
-
-### `POST /api/v1/query` *(JWT required)*
-
-Main query endpoint for regulatory document search and synthesis.
-
-**Request:**
-```json
-{
-  "query": "What are the safety requirements for excavation in EM 385?",
-  "thread_id": "optional-for-multi-turn",
-  "person_id": "user123",
-  "history": [],
-  "cot": true
-}
-```
-
-> **Note:** If `thread_id` is omitted, each request automatically gets a unique UUID (fresh state). Provide an explicit `thread_id` only for multi-turn conversations where you want state continuity.
-
-**Response:**
-```json
-{
-  "response": "According to EM 385-1-1 Chapter 25...",
-  "documents": [{ "content": "...", "source": "EM385", "section": "25-8", "score": 0.016 }],
-  "confidence": 0.89,
-  "quality_metrics": {
-    "citation_coverage": 0.92,
-    "groundedness_score": 0.81,
-    "evidence_score": 0.64,
-    "quality_score": 0.78,
-    "low_confidence": false
-  },
-  "low_confidence": false,
-  "agent_path": ["Router: intent=regulation_search ...", "DataRetrievalAgent: ...", "Synthesizer: ..."],
-  "thought_process": ["[DataRetrievalAgent] Regulatory query detected..."],
-  "regulation_types": ["EM385"],
-  "errors": []
-}
-```
-
-- `low_confidence: true` means the answer was returned but evidence grounding is weak - flag for human review.
-- `errors: []` contains only current-run errors (stale errors from previous sessions are filtered out).
-
-### `GET /api/v1/clause/{clause_reference}` *(JWT required)*
-
-Direct clause lookup - no LLM, database-only.
-
-```bash
-curl -H "Authorization: Bearer <token>" \
-  http://localhost:8000/api/v1/clause/FAR%2052.219-8
-```
-
-### `GET /api/v1/analytics/summary` *(JWT required)*
-
-Returns aggregate query analytics for the last N hours.
-
-### `WS /ws/chat`
-
-Streaming chat via WebSocket. First message must contain `token` for authentication.
-
-```json
-{ "token": "jwt_token", "query": "Find safety requirements for excavation", "cot": true }
-```
-
-Streams `{"type": "token", "data": "..."}` events, followed by `{"type": "complete", ...}` and `{"type": "done"}`.
-
-## Query Processing Pipeline
-
-```text
-User Query
-    │
-    ▼
-┌─ QueryClassifier (deterministic, zero-LLM) ──────────────┐
-│  Outputs: intent, confidence, regulation_type, clause_ref,  │
-│           document_request_type (letter | checklist | form) │
-│  Intents: clause_lookup | regulation_search | out_of_scope  │
-└───────────────────────────────────────────────────────────┘
-    │
-    ├─ out_of_scope -> Direct OOS LLM call (brief answer + polite scope notification)
-    │
-    ├─ clause_lookup -> Direct DB fetch by clause reference
-    │                   (e.g., "FAR 52.219-8")
-    │
-    └─ regulation_search -> Hybrid vector search:
-                            1. Dense: cosine similarity (pgvector)
-                            2. Sparse: Full-text search (tsvector)
-                            3. RRF fusion (k=60)
-                            4. Optional LLM reranker
-                            5. Token-budget trimming
-                                │
-                                ▼
-                           ┌─ ReflectionRAG ────────────────────┐
-                           │  Critique confidence + reg alignment│
-                           │  If low -> expand query -> re-search  │
-                           │  Merge supplemental documents       │
-                           └────────────────────────────────────┘
-                                │
-                    document_request_type (classifier)
-                                │
-                ├─ letter ──────> LetterDrafter (full draft)
-                └─ else ────────> Synthesizer (GPT-4o-mini)
-                                    Format docs -> LLM prompt
-                                    Quality (citation, groundedness)
-                                    low_confidence label + SovereignGuard
-```
+- **GET /api/v1/health** — Status and DB check.
+- **POST /api/v1/query** *(JWT)* — Main query endpoint (request body: `query`, optional `thread_id`, `person_id`, `history`, `cot`).
+- **GET /api/v1/clause/{ref}** *(JWT)* — Direct clause lookup.
+- **WS /ws/chat** — Streaming chat (first message: `token`, `query`).
+- Swagger: http://localhost:8000/docs
 
 ## Configuration
 
-All settings loaded from `.env` via Pydantic `BaseSettings`.
-
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | OpenAI API key |
-| `PG_PASSWORD` | PostgreSQL password |
-| `JWT_SECRET_KEY` | JWT signing secret |
-
-### Core Settings
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MODEL_NAME` | `gpt-4o-mini` | Tool-selector / fallback model |
-| `SYNTHESIZER_MODEL` | `gpt-4o-mini` | Response synthesis model |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model (1536 dims) |
-| `TEMPERATURE` | `0.2` | LLM temperature |
-
-### Retrieval and RAG
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RETRIEVAL_TOP_K` | `6` | Primary retrieval depth |
-| `DENSE_TOP_K` | `10` | Dense search candidates |
-| `SPARSE_TOP_K` | `10` | Sparse/FTS search candidates |
-| `RRF_K` | `60` | Reciprocal Rank Fusion constant |
-| `RAG_TOKEN_LIMIT` | `2400` | Max context tokens for synthesis |
-| `MAX_DOC_CHARS_FOR_SYNTHESIS` | `1200` | Per-document content trim |
-| `RERANKER_ENABLED` | `true` | Toggle LLM reranker (saves ~1s if disabled) |
-| `RERANKER_MODEL` | `gpt-4o-mini` | Reranker model |
-
-### Reflection and Self-Healing
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REFLECTION_THRESHOLD` | `0.35` | Confidence threshold before self-healing |
-| `REFLECTION_HEALING_MARGIN` | `0.05` | Skip retries for near-threshold scores |
-| `SELF_HEALING_SEARCH_K` | `3` | Per expanded query search depth |
-| `SELF_HEALING_MAX_QUERIES` | `1` | Max expanded queries to execute |
-| `SELF_HEALING_MAX_DOCS` | `4` | Max additional docs from self-healing |
-
-### Database
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PG_HOST` | `localhost` | PostgreSQL host |
-| `PG_PORT` | `5432` | PostgreSQL port |
-| `PG_DB` | `daedalus` | Database name |
-| `PG_USER` | `daedalus_admin` | Database user |
-| `PG_POOL_MIN` | `2` | Connection pool minimum |
-| `PG_POOL_MAX` | `10` | Connection pool maximum |
-
-### CORS
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CORS_ORIGINS` | `["http://localhost:3000", "http://localhost:3001"]` | Allowed origins. On AWS ECS, Terraform passes a JSON array string; the app parses it automatically. |
-
-### Sovereign Guard (Optional)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SOVEREIGN_GUARD_ENABLED` | `false` | Enable guardrail layer |
-| `SOVEREIGN_GUARD_BLOCK_MODE` | `soft` | `soft` (label) or `hard` (replace response) |
-| `SOVEREIGN_GUARD_FAIL_OPEN` | `true` | Allow response if guard is unreachable |
+Required env: `OPENAI_API_KEY`, `PG_PASSWORD`, `JWT_SECRET_KEY`. All settings in `src/config.py` (Pydantic). Key options: `RETRIEVAL_TOP_K`, `RERANKER_ENABLED`, `CORS_ORIGINS`, `PG_*`. See `.env.example` and `src/config.py` for full list.
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-pytest                              # Run all test modules
-pytest --cov=src --cov-report=html  # With coverage report
-pytest tests/test_query_classifier.py -v  # Specific module
+pytest                              # All tests
+pytest tests/test_query_classifier.py -v
+pytest tests/test_api.py -v         # API tests
+python tests/unified_test.py         # E2E smoke (server running)
 ```
 
-### API Test Suite
-
-REST and auth endpoints are covered in `tests/test_api.py` (and shared fixtures in `tests/conftest.py`). All API tests are marked with `@pytest.mark.api`.
+Query list runs (output to `results/`):
 
 ```bash
-pytest tests/test_api.py -v        # Run only API tests
-pytest -m api -v                   # Run all tests marked as API (same if only test_api has the marker)
+python scripts/run_test_queries.py --api --list scripts/queries.txt -o results/results.csv --csv
 ```
 
-Covers: root, health, docs/redoc, query (validation, success, 401/403, 429 rate limit, 503 orchestrator down), clause lookup (success, not found, 403), signup (201, 409, 422), login (200, 401), feedback (201, 403, 422), chat threads/history (200, 403), analytics summary (200, 403).
-
-### End-to-End Smoke Test
-
-```bash
-python unified_test.py
-```
-
-Runs 3 test queries (Small Business, FAR clause lookup, EM-385 safety) against the running server, validates responses, and reports latency.
-
-### Quality Gate (CI/CD)
-
-```bash
-python scripts/quality_gate.py \
-  --queries-file scripts/quality_queries.json \
-  --min-pass-rate 0.85 \
-  --max-fallback-rate 0.20 \
-  --min-citation-rate 0.85 \
-  --max-avg-latency 12 \
-  --report-out /tmp/quality_gate_report.json
-```
-
-## Validation Snapshot
-
-| Metric | Result |
-|--------|--------|
-| **Unified E2E** | 3/3 PASS |
-| **Small Business Search** | PASS 7.81s |
-| **FAR 52.219-8(a) Lookup** | PASS 4.22s |
-| **EM-385 Safety** | PASS 4.74s |
-| **Average Latency** | 5.59s |
-| **Stale State Errors** | 0 (fixed via unique thread_ids + state slicing) |
+Latency benchmark: `python scripts/benchmark_latency.py`.
 
 ## Data Ingestion
-
-The ingestion pipeline lives in `ingest_python/`:
 
 ```bash
 cd ingest_python
@@ -417,102 +129,20 @@ pip install -r requirements.txt
 python pipeline.py
 ```
 
-**Pipeline**: PDF -> Text extraction (PyMuPDF) -> Section-aware chunking (clause-boundary splitting) -> Embedding (OpenAI `text-embedding-3-small`) -> PostgreSQL/pgvector
-
-**Corpus**: 16 PDFs (FAR, DFARS, EM 385-1-1) - 3,462 pages, ~1.27M words.
-
-**Chunking**: Target 250-550 tokens per chunk, max cap 800 tokens, 200-token overlap, clause-boundary splitting at 700 tokens.
+Uses `ingest_python/config.py` and env (e.g. `DATABASE_URL`, chunk sizes). See `docs/INGESTION_CHUNKING_STRATEGY.md`.
 
 ## Docker
 
 ```bash
 cp .env.example .env
-docker-compose up -d        # Full stack (backend + postgres)
-docker-compose logs -f backend
+docker-compose up -d
 ```
 
-Or standalone:
+## AWS (Terraform)
 
-```bash
-docker build -t govgig-backend .
-docker run -p 8000:8000 \
-  -e OPENAI_API_KEY=your-key \
-  -e PG_HOST=host.docker.internal \
-  -e PG_PASSWORD=your-password \
-  -e JWT_SECRET_KEY=your-jwt-secret \
-  govgig-backend
-```
+Infra in `infra/`. Deploy: `./scripts/deploy.sh`. After RDS is up, run `src/scripts/*.sql` and the ingest pipeline. See `docs/` and infra README for details.
 
-## AWS Deployment (Terraform + ECS)
+## More
 
-Infrastructure is in `infra/` (Terraform). The app is deployed as a container on **AWS ECS Fargate** behind an ALB, with **RDS PostgreSQL** (pgvector) and secrets in **Secrets Manager**.
-
-### What Terraform Creates
-
-- **VPC**, public/private subnets, security groups  
-- **RDS PostgreSQL 16** (one instance, one database: `daedalus`)  
-- **ECS Fargate** cluster, task definition, service (port 8000)  
-- **ALB** + HTTPS listener (ACM certificate)  
-- **ECR** repository for the app image  
-- **Secrets Manager** for env, auth, and DB credentials  
-
-### Deploy Steps
-
-1. **Configure Terraform**  
-   Copy `infra/backend.hcl.example` → `backend.hcl` and set S3 bucket, key, DynamoDB table for state.  
-   Copy `infra/terraform.tfvars.example` → `terraform.tfvars` and set `acm_certificate_arn`, `route53_zone_id`, and sensitive variables (e.g. from CI/CD).
-
-2. **Apply infrastructure and deploy app**  
-   ```bash
-   ./scripts/deploy.sh
-   ```  
-   This runs `terraform init` and `terraform apply`, waits for RDS, builds and pushes the Docker image to ECR, and forces a new ECS deployment.
-
-3. **Post-deploy: schema and data**  
-   Terraform does **not** create application tables or load regulations data. After RDS is available:
-   - Run schema scripts against the RDS endpoint (e.g. from a bastion or CI):  
-     `src/scripts/setupRegulationsDB.sql`, `src/scripts/setupAuthDB.sql`, `src/scripts/setupChatHistory.sql` (and any other setup scripts the app expects).
-   - **LangGraph checkpointer** tables are created automatically on first app use.
-   - Run the **ingest pipeline** to populate `embeddings_dense` / `embeddings_sparse` (see Data Ingestion).
-
-### Project / Service Naming
-
-- Infra uses **project_name = "daedalus"** (e.g. `daedalus-staging-pg`, ECR repo, ECS service). The default domain is `staging-ai-daedalus.govgig.us`. The app name in the UI remains "GovGig AI".
-
-## Monitoring
-
-### LangSmith (Optional)
-
-```env
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=your-langsmith-key
-LANGCHAIN_PROJECT=govgig-ai
-```
-
-### Logging
-
-```bash
-LOG_LEVEL=DEBUG python -m uvicorn src.api.main:app
-```
-
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| Database connection failed | `python -c "from src.db.connection import test_connection; test_connection()"` |
-| pgvector missing | `psql -d daedalus -c "CREATE EXTENSION IF NOT EXISTS vector;"` |
-| Port 8000 in use | `lsof -ti:8000 \| xargs kill -9` or use `--port 8001` |
-| Import errors | Ensure you're running from repository root |
-| Stale errors in response | Use unique `thread_id` per session or omit it (auto-UUID) |
-
-## Pilot Testing Notes
-
-- **Low-confidence handling**: Answers are never hard-blocked by default. `low_confidence: true` signals weak evidence grounding; thresholds are tuned for procedural/analytical queries and document drafts. Treat as reviewer-required in pilot workflows.
-- **Rate limiting**: 10 requests per minute per authenticated user. Returns HTTP 429 if exceeded.
-- **State isolation**: Each REST request gets a fresh LangGraph state by default. The orchestrator slices accumulated lists to prevent stale data from prior sessions from leaking into responses.
-- **Recommended workflow**: Track `quality_metrics` pass rates using `scripts/quality_gate.py`.
-
-## License
-
-MIT License - See root LICENSE file.
-
+- Full capabilities and pipeline details: **docs/**
+- Quality gate: `python scripts/quality_gate.py --queries-file scripts/quality_queries.json ...`
