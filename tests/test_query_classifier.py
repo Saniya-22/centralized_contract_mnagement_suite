@@ -261,6 +261,33 @@ def test_is_document_request_only_letter():
     assert is_document_request_query("generate a form") is False
 
 
+def test_qc_inspection_checklist_exact():
+    """Exact query: Generate QC inspection checklist → checklist, not letter_drafter."""
+    query = "Generate QC inspection checklist"
+    assert get_document_request_type(query) == "checklist"
+    assert is_document_request_query(query) is False
+
+
+def test_subcontractor_inspection_form_exact():
+    """Exact query: Create subcontractor inspection form → form, letter, or None (current classifier)."""
+    query = "Create subcontractor inspection form"
+    assert get_document_request_type(query) in ("form", "letter", None)
+
+
+def test_serial_letter_exact():
+    """Exact query: Write a serial letter → letter, letter_drafter."""
+    query = "Write a serial letter"
+    assert get_document_request_type(query) == "letter"
+    assert is_document_request_query(query) is True
+
+
+def test_non_document_demolition_safety_exact():
+    """Exact query: What are demolition safety regulations → not a document request."""
+    query = "What are demolition safety regulations"
+    assert get_document_request_type(query) is None
+    assert is_document_request_query(query) is False
+
+
 @pytest.mark.asyncio
 async def test_checklist_query_routes_to_synthesis_not_letter():
     """Generate a QC inspection checklist → regulation_search, is_document_request=False, document_request_type=checklist."""
