@@ -3,7 +3,7 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import logging
 
 from src.config import settings
@@ -60,20 +60,3 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication error",
         )
-
-def get_optional_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))) -> Optional[Dict[str, Any]]:
-    """
-    Optionally validate JWT token. Returns None if no token or invalid token.
-    """
-    if not credentials:
-        return None
-        
-    try:
-        payload = jwt.decode(
-            credentials.credentials, 
-            settings.JWT_SECRET_KEY, 
-            algorithms=[settings.JWT_ALGORITHM]
-        )
-        return payload
-    except:
-        return None

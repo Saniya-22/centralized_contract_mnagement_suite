@@ -267,6 +267,7 @@ After the template, you may add 1-3 bullets of practical guidance if helpful."""
 - Cite EM385, FAR, or DFARS clauses that govern this phase (e.g. inspection requirements, acceptance procedures, warranty obligations).
 - Do NOT discuss contractor selection, FAR Part 36 general construction requirements, or procurement unless directly relevant to the specific phase asked about.
 - If the phase involves handoffs (e.g. turnover, beneficial occupancy), clarify who does what and what documentation is required.
+- If reporting cadence or timing is mentioned, treat it as lifecycle execution context unless retrieved evidence explicitly makes it contract/CO-specific.
 - Be specific to construction — not generic project management."""
         structure_block = """Structure:
 - **Phase Requirements**: What the regulation requires for this specific lifecycle phase (3-5 bullets with citations)
@@ -314,7 +315,9 @@ After the template, you may add 1-3 bullets of practical guidance if helpful."""
     evidence_note = ""
     if evidence_summary is not None:
         avg = float(evidence_summary.get("avg_norm") or 0.0)
-        if avg < 0.5 and intent != "clause_lookup":
+        top = float(evidence_summary.get("top_norm") or 0.0)
+        effective = max(avg, 0.7 * top + 0.3 * avg)
+        if effective < 0.5 and intent != "clause_lookup":
             evidence_note = (
                 "\n\nRetrieved evidence strength is limited. Follow these rules:"
                 "\n1) State clearly (1 sentence max) what is NOT explicitly answered by the retrieved excerpts."

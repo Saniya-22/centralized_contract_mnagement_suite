@@ -1,5 +1,7 @@
 """Main orchestrator using LangGraph for multi-agent coordination"""
 
+from __future__ import annotations
+
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -200,6 +202,8 @@ class GovGigOrchestrator:
         citation_coverage, has_claims = self._citation_coverage(response_text)
         groundedness = self._groundedness_score(response_text, documents)
         evidence_avg = float(evidence.get("avg_norm", 0.0))
+        evidence_top = float(evidence.get("top_norm", 0.0))
+        effective_evidence = max(evidence_avg, 0.7 * evidence_top + 0.3 * evidence_avg)
         query_text = str(state.get("query") or "")
         is_clause_lookup = (
             state.get("query_intent") == QueryIntent.CLAUSE_LOOKUP.value
@@ -229,13 +233,13 @@ class GovGigOrchestrator:
         # Emphasize evidence + groundedness; citations help but shouldn't dominate for relaxed queries.
         if relaxed:
             quality_score = (
-                0.45 * evidence_avg
+                0.45 * effective_evidence
                 + 0.35 * groundedness
                 + 0.20 * citation_coverage
             )
         else:
             quality_score = (
-                0.45 * evidence_avg
+                0.45 * effective_evidence
                 + 0.30 * groundedness
                 + 0.25 * citation_coverage
             )
@@ -243,7 +247,7 @@ class GovGigOrchestrator:
         # ── Weighted confidence score (0..1) ──────────────────────────────────
         # Production rule: avoid binary OR tripwires; compute a score, then decide.
         confidence_score = (
-            0.45 * evidence_avg
+            0.45 * effective_evidence
             + 0.25 * groundedness
             + 0.20 * citation_coverage
             + 0.10 * min(max(quality_score, 0.0), 1.0)
@@ -477,12 +481,65 @@ class GovGigOrchestrator:
             is_roleplay = bool(self._ROLEPLAY_PREFIX_RE.search(query))
             is_product_ui = (not is_roleplay) and any(sig in q_lower for sig in self._PRODUCT_UI_SIGNALS)
             is_too_short = query_words <= 5 and not detected_clause_ref
-            if is_product_ui or is_too_short:
+            has_keyword_signal = bool(getattr(classification, "matched_keywords", []))
+            is_definition_like = bool(re.match(r"(?i)^\s*what\s+(is|are)\s+.+\??\s*$", query.strip()))
+            should_clarify_short = is_too_short and not has_keyword_signal and not is_definition_like
+            if is_product_ui or should_clarify_short:
                 delta["next_agent"] = "clarifier"
                 delta["mode"] = "clarify"
                 delta["agent_path"] = [
                     delta["agent_path"][0].replace(f"→ {next_agent}", "→ clarifier")
                 ]
+
+        # Follow-up amendment requests should continue drafting flow when prior turn was a letter.
+        _amend_phrase_re = re.compile(
+            r"(?i)\b(also include|add clause|amend|revise|update|include this clause|include\b.*\binto the letter|include\b.*\bin the letter|add\b.*\bto letter)\b"
+        )
+        amend_followup = bool(_amend_phrase_re.search(query))
+        recent_assistant_text = " ".join(
+            (msg.get("content") or "")
+            for msg in (chat_history[-3:] if chat_history else [])
+            if msg.get("role") == "assistant"
+        )
+        assistant_looks_like_letter = bool(
+            re.search(
+                r"(?i)\b(subject:|dear\s+\w+|sincerely|request for equitable adjustment|serial letter)\b",
+                recent_assistant_text,
+            )
+        )
+        # Case 1: Prior assistant turn was a letter → treat as amendment.
+        # Case 2: Query itself says "include X into the letter" even without history
+        #         (e.g. "include 52.236-11 ... into the letter").
+        query_explicitly_says_letter = bool(
+            re.search(r"(?i)\b(into|in|to)\s+the\s+(letter|rea|rfi|draft)\b", query)
+        )
+        if amend_followup and (assistant_looks_like_letter or query_explicitly_says_letter):
+            delta["is_document_request"] = True
+            delta["document_request_type"] = "letter"
+            delta["next_agent"] = "data_retrieval"
+            delta["agent_path"] = delta["agent_path"] + ["Router: amendment_followup_detected → data_retrieval"]
+
+        # Compact telemetry for routing audits/regression tracking.
+        route_reason = "default"
+        if delta.get("next_agent") == "clarifier":
+            route_reason = "product_ui" if is_product_ui else "short_ambiguous"
+        elif delta.get("is_document_request"):
+            route_reason = "document_request"
+        elif intent == QueryIntent.OUT_OF_SCOPE:
+            route_reason = "oos"
+        logger.info(
+            "[RouterTelemetry] intent=%s conf=%.2f next=%s reason=%s "
+            "short=%s kw=%s def_like=%s amend_followup=%s prior_letter=%s",
+            intent.value,
+            float(classification.confidence or 0.0),
+            delta.get("next_agent"),
+            route_reason,
+            bool('is_too_short' in locals() and is_too_short),
+            bool('has_keyword_signal' in locals() and has_keyword_signal),
+            bool('is_definition_like' in locals() and is_definition_like),
+            bool(amend_followup),
+            bool(assistant_looks_like_letter),
+        )
 
         # ── Acronym disambiguation (improves UX + avoids weak/hallucinated definitions) ──
         m = re.match(r"(?i)^\s*what\s+is\s+(?:a\s+|an\s+)?([A-Z]{2,8})\s*\??\s*$", query.strip())

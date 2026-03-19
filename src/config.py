@@ -84,7 +84,6 @@ class Settings(BaseSettings):
     LOGIN_MAX_ATTEMPTS: int = 5                   # Max failed login attempts before lockout
     RATE_LIMIT_MAX_REQUESTS: int = 10             # Per-user request limit (query endpoint)
     RATE_LIMIT_WINDOW_SECONDS: int = 60           # Sliding window for rate limit
-    ADMIN_API_KEY: Optional[str] = None           # ECS secret for operational endpoints
     COOKIE_SECRET: Optional[str] = None            # ECS secret for session management
     
     # CORS
@@ -169,13 +168,6 @@ class Settings(BaseSettings):
             base += f"?sslmode={self.PG_SSLMODE}"
         return base
     
-    @property
-    def async_database_url(self) -> str:
-        """Construct async database URL"""
-        base = f"postgresql+asyncpg://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
-        if self.PG_SSLMODE != "disable":
-            base += f"?sslmode={self.PG_SSLMODE}"
-        return base
 
 
 # Global settings instance

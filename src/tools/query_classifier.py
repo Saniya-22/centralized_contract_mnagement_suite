@@ -176,6 +176,9 @@ _REGULATION_KEYWORDS: tuple[str, ...] = (
     "siop", "ppi", "pre-purchase inspection", "pre purchase inspection",
     "insurance", "insurance requirements",
     "small business set-aside", "set aside", "set-aside",
+    "off site storage", "off-site storage", "offsite storage",
+    "stored materials", "materials stored offsite", "bill of materials",
+    "insurance certificate", "bond certificate", "storage location",
 )
 
 def _build_keyword_pattern(keyword: str) -> re.Pattern[str]:
@@ -258,6 +261,8 @@ _DOCUMENT_REQUEST_TRIGGERS: tuple[str, ...] = (
     "rfi ", "write an rfi", "draft an rfi",
     "generate a form", "generate a checklist",
     "stop-work order", "inspection report", "phase inspection",
+    "also include", "add clause", "revise the letter", "update the letter",
+    "amend the letter", "include this clause",
 )
 
 # Checklist/form phrasing: these are document requests but go to synthesis (checklist content), not letter_drafter.
@@ -270,6 +275,11 @@ _FORM_REQUEST_PHRASES: tuple[str, ...] = (
     "draft a form", "write a form",
 )
 
+_LETTER_AMENDMENT_PATTERN = re.compile(
+    r"\b(also include|add clause|amend|revise|update|include this clause)\b.*\b(letter|rea|rfi)\b",
+    re.IGNORECASE,
+)
+
 
 def get_document_request_type(query: str | None) -> Optional[str]:
     """Classify document request into letter | checklist | form. Only letter goes to letter_drafter."""
@@ -280,6 +290,8 @@ def get_document_request_type(query: str | None) -> Optional[str]:
         return "checklist"
     if any(p in q for p in _FORM_REQUEST_PHRASES):
         return "form"
+    if _LETTER_AMENDMENT_PATTERN.search(q):
+        return "letter"
     if any(t in q for t in _DOCUMENT_REQUEST_TRIGGERS):
         return "letter"
     return None
@@ -466,11 +478,20 @@ _OUT_OF_SCOPE_SYSTEM_PATTERNS: tuple[str, ...] = (
 
 
 def _is_system_or_product_query(query: str) -> bool:
-    """True if the query is about the product/feature, not regulations."""
+    """True only for product/feature questions with no regulatory signal."""
     if not query or not query.strip():
         return False
-    q = query.strip().lower()
-    return any(p in q for p in _OUT_OF_SCOPE_SYSTEM_PATTERNS)
+    q = query.strip()
+    q_lower = q.lower()
+    has_product_signal = any(p in q_lower for p in _OUT_OF_SCOPE_SYSTEM_PATTERNS)
+    if not has_product_signal:
+        return False
+
+    # Do not force out-of-scope when the query clearly asks about regulations.
+    has_clause = bool(_CLAUSE_PATTERN.search(q))
+    has_source = bool(_SOURCE_PATTERN.search(q))
+    has_keyword = any(pattern.search(q) for _, pattern in _KW_PATTERNS)
+    return not (has_clause or has_source or has_keyword)
 
 
 # ── Waterfall Layers ─────────────────────────────────────────────────────────

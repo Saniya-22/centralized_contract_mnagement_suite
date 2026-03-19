@@ -33,8 +33,8 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="GovGig AI - Python LangGraph Backend for Regulatory Document RAG",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None
 )
 
 # Add CORS middleware
@@ -525,12 +525,12 @@ async def websocket_chat(websocket: WebSocket):
                 "type": "error",
                 "data": {"message": "Internal server error"}
             })
-        except:
+        except Exception:
             pass
     finally:
         try:
             await websocket.close()
-        except:
+        except Exception:
             pass
 
 

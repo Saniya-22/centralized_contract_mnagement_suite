@@ -77,7 +77,9 @@ class DatabaseConnectionPool:
                 self._pool.putconn(conn)
                 logger.debug("Connection returned to pool")
             except Exception as e:
-                logger.error(f"Failed to return connection to pool: {e}")
+                # "trying to put unkeyed connection" is cosmetic — the connection
+                # is still usable.  Never close it here; that poisons the pool.
+                logger.debug(f"putconn warning (non-fatal): {e}")
     
     def close_all(self):
         """Close all connections in the pool"""
