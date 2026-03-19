@@ -46,15 +46,24 @@ def rerank(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         logger.info("[Reranker] Disabled (RERANKER_ENABLED=False). Using RRF scores.")
         return chunks
 
-    # ── Cap input to top 8 chunks so strong clause at 6–8 can be reranked (RC-3) ─
-    chunks = chunks[:8]
+    # ── Cap input to top 12 chunks so strong clauses at 9–12 can surface ───────
+    # (Latency trade-off: 12 is a good default for quality without blowing prompt size.)
+    chunks = chunks[:12]
 
-    # Build numbered preview
+    # Build numbered preview (metadata-rich to improve clause/title ranking)
     numbered_previews = []
     for i, chunk in enumerate(chunks):
+        meta = chunk.get("metadata") or {}
+        src = meta.get("source") or chunk.get("source_file") or chunk.get("source") or ""
+        section_number = meta.get("section_number") or meta.get("part") or meta.get("section") or ""
+        section_title = meta.get("section_title") or meta.get("title") or ""
         text = chunk.get("text") or chunk.get("content") or ""
-        preview = text[:300].replace("\n", " ")
-        numbered_previews.append(f"[{i}] {preview}")
+        text_preview = text[:400].replace("\n", " ")
+        header = " | ".join([p for p in [str(src).strip(), str(section_number).strip(), str(section_title).strip()] if p])
+        if header:
+            numbered_previews.append(f"[{i}] {header}\n{text_preview}")
+        else:
+            numbered_previews.append(f"[{i}] {text_preview}")
     previews_block = "\n\n".join(numbered_previews)
 
     try:

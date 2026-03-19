@@ -5,7 +5,6 @@ import json
 import asyncio
 import aiohttp
 import asyncpg
-import fitz
 import re
 import hashlib
 import logging
@@ -14,6 +13,8 @@ import tiktoken
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Union, Tuple
+
+from docling.document_converter import DocumentConverter
 
 import nltk
 from nltk.corpus import stopwords
@@ -54,6 +55,136 @@ warnings.filterwarnings('ignore')
 
 from config import *
 
+# ---------------------------------------------------------
+# Text normalization (PDF extraction hardening)
+# ---------------------------------------------------------
+
+_LINESTART_MARKER_RE = re.compile(
+    r"^\s*(?:"
+    r"\([a-z]\)\s|"            # (a)
+    r"\(\d+\)\s|"              # (1)
+    r"\([ivx]+\)\s|"           # (i)
+    r"\d{2,3}\.\d{3}(?:-\d+)?\s|"  # FAR/DFARS 52.212-4
+    r"\d+-\d+\.\s|"            # EM385 1-1.
+    r"[A-Z]-\d+\s|"            # Appendix A-1
+    r"Rule\s+\d+\s"            # Appendix Rule 1
+    r")",
+    re.IGNORECASE,
+)
+
+
+def normalize_legal_text(text: str, source: str) -> str:
+    """Conservatively normalize PDF-extracted legal text for chunking.
+
+    Goals:
+    - Reduce extraction artifacts that create oversized "sentences"
+    - Preserve legal structure markers at line-start
+    """
+    if not text:
+        return ""
+
+    src = (source or "").upper()
+
+    # Normalize common unicode whitespace/dashes that break regexes.
+    t = text.replace("\u00a0", " ")  # NBSP
+    t = t.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")  # – — minus
+
+    # Normalize newlines.
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Fix hyphenation across line breaks: "manufac-\ntured" -> "manufactured"
+    t = re.sub(r"([A-Za-z])-\n([A-Za-z])", r"\1\2", t)
+
+    # Collapse runs of spaces/tabs (but keep newlines for structure).
+    t = re.sub(r"[ \t\f\v]+", " ", t)
+
+    # Join "soft wraps" (single newline within a paragraph) into spaces, but preserve:
+    # - blank lines (paragraph boundaries)
+    # - explicit line-start markers like (a), (1), 52.xxx-x, 1-1., A-1, Rule 1
+    lines = t.split("\n")
+    out: List[str] = []
+    i = 0
+    while i < len(lines):
+        cur = lines[i].rstrip()
+        if cur.strip() == "":
+            out.append("")
+            i += 1
+            continue
+
+        # Build a paragraph by consuming subsequent non-blank lines.
+        para_parts = [cur.strip()]
+        i += 1
+        while i < len(lines) and lines[i].strip() != "":
+            nxt_raw = lines[i].rstrip()
+            nxt = nxt_raw.strip()
+
+            # Preserve structure markers as their own lines.
+            if _LINESTART_MARKER_RE.match(nxt):
+                break
+
+            prev = para_parts[-1]
+            # Heuristic: join line if previous doesn't end sentence-ish and next looks like continuation.
+            prev_end = prev[-1:] if prev else ""
+            continuation = bool(re.match(r"^(?:[a-z0-9,;:\)\]\}])", nxt))
+            not_sentence_end = prev_end not in ".!?:"
+
+            if not_sentence_end and continuation:
+                para_parts[-1] = f"{prev} {nxt}"
+            else:
+                para_parts.append(nxt)
+            i += 1
+
+        out.append("\n".join(para_parts) if src == "EM385" else " ".join(para_parts))
+
+    # Collapse multiple blank lines to max two.
+    t2 = "\n".join(out)
+    t2 = re.sub(r"\n{3,}", "\n\n", t2)
+    return t2.strip()
+
+
+def _norm_for_dedupe(text: str) -> str:
+    """Normalization for exact-dedupe hashing (whitespace-insensitive)."""
+    if not text:
+        return ""
+    t = text.replace("\u00a0", " ").replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    # Make whitespace differences irrelevant while preserving visible characters.
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
+def dedupe_chunks_exact(
+    chunks: List[Dict[str, Any]],
+    *,
+    scope: str = "section",
+) -> List[Dict[str, Any]]:
+    """Drop exact-duplicate chunk texts to avoid redundant embeddings/storage.
+
+    scope:
+      - "section": dedupe within (filename, section_number)
+      - "document": dedupe within a document regardless of section
+    """
+    if not chunks:
+        return []
+    seen_by_key: Dict[Tuple[Optional[str], Optional[str]], set[str]] = {}
+    out: List[Dict[str, Any]] = []
+    for c in chunks:
+        txt = c.get("text") or ""
+        if not txt.strip():
+            continue
+        norm = _norm_for_dedupe(txt)
+        h = hashlib.md5(norm.encode("utf-8")).hexdigest()
+        if scope == "document":
+            key = (None, None)
+        else:
+            key = (str(c.get("section_number") or ""), str(c.get("section_title") or ""))
+        bucket = seen_by_key.setdefault(key, set())
+        if h in bucket:
+            continue
+        bucket.add(h)
+        out.append(c)
+    return out
 # ---------------------------------------------------------
 # SQL Table Definitions (SQLAlchemy Core)
 # ---------------------------------------------------------
@@ -217,70 +348,139 @@ def encode_bm25(text: str) -> Dict[str, List[int]]:
     return {"indices": indices, "values": values}
 
 # ---------------------------------------------------------
-# PDF Extraction Functions
+# PDF Parsing (Docling)
 # ---------------------------------------------------------
 
-def extract_text_from_block(block: Dict[str, Any]) -> str:
-    """Helper to extract text content from a PyMuPDF text block."""
-    text = ""
-    if 'lines' in block:
-        for line in block['lines']:
-            if 'text' in line:
-                text += line['text'] + '\n'
-            elif 'spans' in line:
-                for span in line['spans']:
-                    if 'text' in span:
-                        text += span['text']
-                text += '\n'
-    return text
+def _safe_model_dump(obj: Any) -> Any:
+    """Best-effort conversion of pydantic-ish objects to JSON-serializable dicts."""
+    if obj is None:
+        return None
+    for attr in ("model_dump", "dict"):
+        fn = getattr(obj, attr, None)
+        if callable(fn):
+            try:
+                return fn()
+            except Exception:
+                pass
+    return obj
 
-def extract_page_content(page: fitz.Page, page_num: int) -> Dict[str, Any]:
-    """Extracts text and identifies potential tables from a single PDF page."""
-    content: Dict[str, Any] = {
-        'pageNum': page_num,
-        'text': '',
-        'tables': [],
-        'hasImages': False
+
+def _table_structured_from_docling(table_item: Any) -> Dict[str, Any]:
+    """Convert Docling TableItem -> {headers: [...], rows: [...]} + raw fallback."""
+    data = getattr(table_item, "data", None)
+    raw = _safe_model_dump(data) if data is not None else _safe_model_dump(table_item)
+    table_cells = []
+    num_rows = 0
+    num_cols = 0
+    if data is not None:
+        table_cells = getattr(data, "table_cells", []) or []
+        num_rows = int(getattr(data, "num_rows", 0) or 0)
+        num_cols = int(getattr(data, "num_cols", 0) or 0)
+
+    # Build a dense grid when possible.
+    headers: List[str] = []
+    rows: List[List[str]] = []
+    if table_cells and num_rows > 0 and num_cols > 0:
+        grid: List[List[str]] = [["" for _ in range(num_cols)] for _ in range(num_rows)]
+        header_mask: List[List[bool]] = [[False for _ in range(num_cols)] for _ in range(num_rows)]
+
+        for cell in table_cells:
+            try:
+                r0 = int(getattr(cell, "start_row_offset_idx"))
+                r1 = int(getattr(cell, "end_row_offset_idx"))
+                c0 = int(getattr(cell, "start_col_offset_idx"))
+                c1 = int(getattr(cell, "end_col_offset_idx"))
+                txt = str(getattr(cell, "text", "") or "").strip()
+                is_header = bool(getattr(cell, "column_header", False))
+            except Exception:
+                continue
+
+            for r in range(max(0, r0), min(num_rows, r1 + 1)):
+                for c in range(max(0, c0), min(num_cols, c1 + 1)):
+                    if txt and not grid[r][c]:
+                        grid[r][c] = txt
+                    header_mask[r][c] = header_mask[r][c] or is_header
+
+        # Pick header row: first row where any cell is marked column_header; else row 0.
+        header_row_idx = 0
+        for r in range(num_rows):
+            if any(header_mask[r][c] for c in range(num_cols)):
+                header_row_idx = r
+                break
+
+        headers = [grid[header_row_idx][c] or f"col_{c+1}" for c in range(num_cols)]
+        for r in range(header_row_idx + 1, num_rows):
+            if any((grid[r][c] or "").strip() for c in range(num_cols)):
+                rows.append([grid[r][c] for c in range(num_cols)])
+
+    return {
+        "headers": headers,
+        "rows": rows,
+        "raw": raw,
+        "num_rows": num_rows,
+        "num_cols": num_cols,
     }
 
+
+def _table_text_from_structured(structured: Dict[str, Any], max_rows: int = 30) -> str:
+    """Flatten structured table into an embedding-friendly text string."""
+    headers = structured.get("headers") or []
+    rows = structured.get("rows") or []
+    out: List[str] = []
+    if headers:
+        out.append(" | ".join(str(h) for h in headers))
+    for r in rows[:max_rows]:
+        out.append(" | ".join(str(x) for x in (r or [])))
+    return "\n".join(out).strip()
+
+
+def parse_pdf_with_docling(file_path: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Parse PDF via Docling. Returns (full_text, table_chunks)."""
+    converter = DocumentConverter()
+    result = converter.convert(file_path)
+
+    doc = result.document
+
+    # Prefer markdown export for reading order; fallback to concatenated text items.
+    full_text = ""
     try:
-        text_dict = page.get_text('dict')
-        if 'blocks' in text_dict:
-            for block in text_dict['blocks']:
-                if block.get('type') == 0:
-                    block_text = extract_text_from_block(block)
-                    if block_text.strip():
-                        content['text'] += block_text
-                elif block.get('type') == 1:
-                    content['hasImages'] = True
+        full_text = doc.export_to_markdown() or ""
+    except Exception:
+        full_text = ""
 
-        lines = content['text'].split('\n')
-        table_lines: List[str] = []
-        for line in lines:
-            # Improved table detection: pipes OR multiple spaces/tabs (columnar alignment)
-            is_table_row = (line.count('\t') >= 1 or 
-                           len(re.findall(r'\s{4,}', line)) >= 1 or
-                           line.count('|') >= 2)
-            
-            if is_table_row:
-                table_lines.append(line)
-            elif len(table_lines) >= 3:
-                content['tables'].append('\n'.join(table_lines))
-                table_lines = []
-            else:
-                table_lines = []
+    if not full_text:
+        texts = getattr(doc, "texts", None) or []
+        parts: List[str] = []
+        for item in texts:
+            txt = getattr(item, "text", None)
+            if txt:
+                parts.append(str(txt))
+        full_text = "\n".join(parts)
 
-        if len(table_lines) >= 3:
-            content['tables'].append('\n'.join(table_lines))
+    # Build dedicated table chunks (dual storage)
+    table_chunks: List[Dict[str, Any]] = []
+    tables = getattr(doc, "tables", None) or []
+    for idx, table in enumerate(tables):
+        structured = _table_structured_from_docling(table)
+        table_text = _table_text_from_structured(structured)
+        if not table_text:
+            # Last-resort: embed raw JSON-ish form.
+            try:
+                table_text = json.dumps(structured.get("raw") or structured, ensure_ascii=False)[:4000]
+            except Exception:
+                table_text = str(structured.get("raw") or "")
 
-    except Exception as e:
-        logger.warning(f"Page {page_num}: extraction failed, attempting backup - {e}")
-        try:
-            content['text'] = page.get_text()
-        except Exception as e2:
-            logger.error(f"Page {page_num}: backup extraction failed - {e2}")
+        table_chunks.append({
+            "text": table_text,
+            "metadata_overrides": {
+                "type": "table",
+                "table_text": table_text,
+                "table_structured": structured,
+                "table_index": idx,
+            },
+        })
 
-    return content
+    return full_text, table_chunks
 
 def extract_metadata(filename: str, file_path: str) -> Dict[str, Any]:
     """Extracts initial document metadata from filename and path."""
@@ -453,6 +653,83 @@ def count_tokens(text: str) -> int:
     return len(TOKENIZER.encode(text))
 
 
+_OBLIGATION_RE = re.compile(r"\b(shall|must|required|only\s+if)\b", re.IGNORECASE)
+_CROSSREF_RE = re.compile(
+    r"\b(see\s+paragraph\s+\([a-z0-9ivx]+\)|as\s+defined\s+in|FAR\s+\d+\.\d+(?:-\d+)?|DFARS\s+\d+\.\d+(?:-\d+)?)\b",
+    re.IGNORECASE,
+)
+_ENUM_LINE_RE = re.compile(r"^\s*\(([a-z]|\d+|[ivx]+)\)\s+\S", re.IGNORECASE)
+
+
+def should_force_keep(section_text: str) -> bool:
+    """Section Integrity Guard: keep strong legal units intact when possible."""
+    if not section_text:
+        return False
+    txt = section_text.strip()
+    if _OBLIGATION_RE.search(txt):
+        return True
+    if _CROSSREF_RE.search(txt):
+        return True
+    # Enumerated conditions with substantive text: multiple enum lines.
+    enum_hits = 0
+    for line in txt.splitlines():
+        if _ENUM_LINE_RE.match(line):
+            enum_hits += 1
+            if enum_hits >= 2:
+                return True
+    return False
+
+
+def _split_em385_sublevels(text: str) -> List[str]:
+    """Split EM385 blocks on sub-level patterns (1-1.a, a., (1), (a))."""
+    if not text:
+        return []
+    lines = text.splitlines()
+    start_re = re.compile(
+        r"^\s*(?:\d+-\d+\.[a-z]\b|[a-z]\.\s|\(\d+\)\s|\([a-z]\)\s)",
+        re.IGNORECASE,
+    )
+    blocks: List[str] = []
+    current: List[str] = []
+    for line in lines:
+        if start_re.match(line) and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+    return [b for b in blocks if b]
+
+
+def _split_anchor_and_remainder(section_text: str, desired_anchor_tokens: int = 150) -> Tuple[Optional[str], str]:
+    """Create anchor chunk = header + next 1–2 paragraphs (or token target)."""
+    if not section_text:
+        return None, ""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", section_text.strip()) if p.strip()]
+    if not paragraphs:
+        return None, section_text.strip()
+    # Always include the first paragraph (usually contains the clause/section header line).
+    anchor_parts = [paragraphs[0]]
+    # Add up to one more paragraph, then optionally expand until token target.
+    for p in paragraphs[1:3]:
+        if count_tokens("\n\n".join(anchor_parts + [p])) > desired_anchor_tokens:
+            break
+        anchor_parts.append(p)
+    anchor_text = "\n\n".join(anchor_parts).strip()
+    remainder = "\n\n".join(paragraphs[len(anchor_parts):]).strip()
+    return anchor_text if anchor_text else None, remainder
+
+
+def _ensure_max_chunk_tokens(text: str) -> List[str]:
+    """Enforce MAX_TOKEN_CAP with minimal splitting (paragraph → sentence → token)."""
+    if not text:
+        return []
+    if count_tokens(text) <= MAX_TOKEN_CAP:
+        return [text]
+    # Reuse existing create_chunks() which already does paragraph/sentence/token fallback.
+    return create_chunks(text)
+
 _ANCHOR_RE = re.compile(
     r"^\s*(?:FAR|DFARS)?\s*(?:52\.\d{3}-\d+|252\.\d{3}-\d+|\d{2,3}\.\d{3}(?:-\d+)?)\b",
     re.IGNORECASE,
@@ -623,7 +900,7 @@ def _merge_chunk_records_within_section(
         cur = dict(chunk_records[i])
         cur_text = cur.get("text", "")
         cur_tokens = count_tokens(cur_text)
-        if cur_tokens >= min_tokens or _keep_anchor_standalone(cur_text):
+        if cur.get("is_anchor") or cur_tokens >= min_tokens or _keep_anchor_standalone(cur_text):
             merged.append(cur)
             i += 1
             continue
@@ -635,7 +912,7 @@ def _merge_chunk_records_within_section(
                 prev.get("section_number") == cur.get("section_number")
                 and prev.get("section_title") == cur.get("section_title")
             )
-            if same_section and count_tokens(prev["text"]) + cur_tokens <= max_tokens:
+            if same_section and not prev.get("is_anchor") and count_tokens(prev["text"]) + cur_tokens <= max_tokens:
                 prev["text"] = f"{prev['text']}\n\n{cur_text}"
                 i += 1
                 continue
@@ -647,7 +924,7 @@ def _merge_chunk_records_within_section(
                 nxt.get("section_number") == cur.get("section_number")
                 and nxt.get("section_title") == cur.get("section_title")
             )
-            if same_section and cur_tokens + count_tokens(nxt.get("text", "")) <= max_tokens:
+            if same_section and not nxt.get("is_anchor") and cur_tokens + count_tokens(nxt.get("text", "")) <= max_tokens:
                 nxt["text"] = f"{cur_text}\n\n{nxt['text']}"
                 chunk_records[i + 1] = nxt
                 i += 1
@@ -692,6 +969,24 @@ def create_chunks(text: str) -> List[str]:
                 
                 if sent_tokens > MAX_TOKEN_CAP:
                     logger.warning(f"Oversized sentence ({sent_tokens} tokens) found. Force-splitting.")
+                    # Try meaning-preserving splits before token-window fallback.
+                    # 1) Split on line-start style markers that may have been flattened into a single line.
+                    marker_parts = re.split(r"\s(?=\([a-z]|\d+|[ivx]+\)\s)", sent)
+                    marker_parts = [p.strip() for p in marker_parts if p.strip()]
+                    if len(marker_parts) > 1 and all(count_tokens(p) <= MAX_TOKEN_CAP for p in marker_parts):
+                        for p in marker_parts:
+                            chunks.append(p)
+                        continue
+
+                    # 2) Split on semicolons / enumerator separators (common in legal text).
+                    semi_parts = re.split(r";\s+", sent)
+                    semi_parts = [p.strip() for p in semi_parts if p.strip()]
+                    if len(semi_parts) > 1 and all(count_tokens(p) <= MAX_TOKEN_CAP for p in semi_parts):
+                        for p in semi_parts:
+                            chunks.append(p)
+                        continue
+
+                    # 3) Last resort: token-window splitting.
                     tokens = TOKENIZER.encode(sent)
                     for j in range(0, len(tokens), TARGET_CHUNK_TOKENS):
                         chunk_tokens = tokens[j : j + TARGET_CHUNK_TOKENS]
@@ -721,47 +1016,115 @@ def create_chunks(text: str) -> List[str]:
     merged = _merge_small_text_chunks(chunks, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
     return merged
 
-def create_section_aware_chunks(sections: List[Dict[str, Any]], source: str) -> List[Dict[str, Any]]:
-    """Processes sections into chunks; structure-first (clause/subclause), then size."""
+def create_section_aware_chunks(
+    sections: List[Dict[str, Any]],
+    source: str,
+) -> List[Dict[str, Any]]:
+    """Chunking v2: meaning-first gates (800/900/1200) + anchors + integrity guard."""
     all_chunks: List[Dict[str, Any]] = []
     src = (source or "").upper()
+
     for section in sections:
-        text = section["full_text"].strip()
-        if not text:
+        section_text = (section.get("full_text") or "").strip()
+        if not section_text:
             continue
 
-        split_blocks = _split_on_clause_boundaries(text, source)
+        force_keep = should_force_keep(section_text)
+        section_tokens = count_tokens(section_text)
 
+        # Anchor enrichment: emit an anchor chunk (header + 1–2 paragraphs).
+        anchor_text, remainder = _split_anchor_and_remainder(section_text, desired_anchor_tokens=150)
+        if anchor_text:
+            for part in _ensure_max_chunk_tokens(anchor_text):
+                all_chunks.append({
+                    "text": part,
+                    "section_number": section.get("section_number"),
+                    "section_title": section.get("section_title"),
+                    "hierarchy_struct": section.get("hierarchy_struct"),
+                    "hierarchy_path": section.get("hierarchy_path"),
+                    "is_anchor": True,
+                })
+
+        # Use remainder for the main body chunking (avoid duplicating anchor content).
+        body_text = remainder if remainder else ""
+
+        # If no remainder (tiny section), we're done.
+        if not body_text:
+            continue
+
+        # Section Integrity Guard: keep as one unit (then enforce max cap minimally).
+        if force_keep:
+            for part in _ensure_max_chunk_tokens(body_text):
+                all_chunks.append({
+                    "text": part,
+                    "section_number": section.get("section_number"),
+                    "section_title": section.get("section_title"),
+                    "hierarchy_struct": section.get("hierarchy_struct"),
+                    "hierarchy_path": section.get("hierarchy_path"),
+                })
+            continue
+
+        # Meaning-first gate: keep intact for <=800, or <=900 (no subclause split),
+        # then enforce max-cap if needed.
+        if section_tokens <= KEEP_INTACT_TOKEN_LIMIT or section_tokens <= SUBCLAUSE_SPLIT_TOKEN_LIMIT:
+            for part in _ensure_max_chunk_tokens(body_text):
+                all_chunks.append({
+                    "text": part,
+                    "section_number": section.get("section_number"),
+                    "section_title": section.get("section_title"),
+                    "hierarchy_struct": section.get("hierarchy_struct"),
+                    "hierarchy_path": section.get("hierarchy_path"),
+                })
+            continue
+
+        # For >900 tokens: split by subclause/sublevel boundaries first.
+        split_blocks = _split_on_clause_boundaries(body_text, source)
         for block in split_blocks:
             block_tokens = count_tokens(block)
-            if block_tokens <= MAX_TOKEN_CAP:
-                sub_blocks = [block]
-            elif src in {"FAR", "DFARS"}:
-                sub_blocks = _split_on_subclause_boundaries(block)
+
+            if block_tokens <= SUBCLAUSE_SPLIT_TOKEN_LIMIT:
+                for part in _ensure_max_chunk_tokens(block):
+                    all_chunks.append({
+                        "text": part,
+                        "section_number": section.get("section_number"),
+                        "section_title": section.get("section_title"),
+                        "hierarchy_struct": section.get("hierarchy_struct"),
+                        "hierarchy_path": section.get("hierarchy_path"),
+                    })
+                continue
+
+            if src in {"FAR", "DFARS"}:
+                sub_blocks = _split_on_subclause_boundaries(block)  # (a)(1)(i) at line start
+            elif src == "EM385":
+                sub_blocks = _split_em385_sublevels(block)
             else:
                 sub_blocks = [block]
 
             for sub_block in sub_blocks:
                 st = count_tokens(sub_block)
-                if st <= MAX_TOKEN_CAP:
-                    block_chunks = [sub_block]
+                # If still large, paragraph/sentence/token split only as needed to satisfy max cap.
+                if st > PARAGRAPH_SPLIT_TOKEN_LIMIT:
+                    parts = create_chunks(sub_block)
                 else:
-                    block_chunks = create_chunks(sub_block)
-                block_chunks = _merge_small_text_chunks(block_chunks, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
+                    parts = _ensure_max_chunk_tokens(sub_block)
 
-                for chunk_text in block_chunks:
+                parts = _merge_small_text_chunks(parts, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
+                for chunk_text in parts:
                     all_chunks.append({
                         "text": chunk_text,
-                        "section_number": section["section_number"],
-                        "section_title": section["section_title"],
-                        "hierarchy_struct": section["hierarchy_struct"],
-                        "hierarchy_path": section["hierarchy_path"],
+                        "section_number": section.get("section_number"),
+                        "section_title": section.get("section_title"),
+                        "hierarchy_struct": section.get("hierarchy_struct"),
+                        "hierarchy_path": section.get("hierarchy_path"),
                     })
-    return _merge_chunk_records_within_section(
+
+    # Consolidate tiny chunks within sections, but never merge anchors.
+    merged = _merge_chunk_records_within_section(
         all_chunks,
         min_tokens=MIN_CHUNK_TOKENS,
         max_tokens=MAX_TOKEN_CAP,
     )
+    return merged
 
 # ---------------------------------------------------------
 # Embedding and Persistence Logic
@@ -863,6 +1226,13 @@ async def store_chunks(chunks: List[Dict[str, Any]], embeddings: List[Optional[L
             "regulation_type": base_metadata.get("source"),
         }
 
+        # Chunking v2: carry additional per-chunk metadata.
+        if chunk.get("is_anchor"):
+            metadata["is_anchor"] = True
+        overrides = chunk.get("metadata_overrides") or {}
+        if overrides:
+            metadata.update(overrides)
+
         # Source-specific namespace for better filtering
         source = base_metadata.get("source", "Unknown").lower()
         chunk_namespace = f"{NAMESPACE}-{source}"
@@ -926,24 +1296,32 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
                 logger.info(f"  {filename}: File already processed. Skipping.")
                 return {"filename": filename, "skipped": True}
 
-        doc: fitz.Document = fitz.open(file_path)
         metadata: Dict[str, Any] = extract_metadata(filename, file_path)
         metadata["file_hash"] = fhash
-
-        full_text: str = ""
-        for i, page in enumerate(doc):
-            content = extract_page_content(page, i + 1)
-            full_text += content["text"] + "\n\n"
-            for table in content.get("tables", []):
-                if table.strip():
-                    full_text += "\n\n[Table]\n" + table.strip() + "\n\n"
+        full_text, table_chunks = parse_pdf_with_docling(file_path)
 
         source = metadata.get("source", "UNKNOWN")
-        sections = extract_structured_sections(full_text, source)
+        normalized_text = normalize_legal_text(full_text, source)
+        sections = extract_structured_sections(normalized_text, source)
         chunks = create_section_aware_chunks(sections, source)
+        before = len(chunks)
+        chunks = dedupe_chunks_exact(chunks, scope="section")
+        if len(chunks) != before:
+            logger.info(f"  {filename}: Dropped {before - len(chunks)} exact-duplicate chunks (pre-embed).")
+        # Add Docling tables as dedicated chunks (dual storage in metadata)
+        if table_chunks:
+            for t in table_chunks:
+                chunks.append({
+                    "text": t.get("text", ""),
+                    "section_number": None,
+                    "section_title": "Table",
+                    "hierarchy_struct": {},
+                    "hierarchy_path": [],
+                    "metadata_overrides": t.get("metadata_overrides") or {},
+                })
         if not chunks:
             logger.warning(f"  {filename}: Structured section parsing returned no chunks. Using raw fallback chunking.")
-            chunks = [{"text": t} for t in create_chunks(full_text)]
+            chunks = [{"text": t} for t in create_chunks(normalized_text)]
         logger.info(f"  {filename}: Extracted {len(chunks)} chunks.")
 
         # Generate embeddings with token-limit guardrail
@@ -952,7 +1330,6 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
         async with engine.begin() as conn:
             await store_chunks(chunks, embeddings, metadata, conn)
         
-        doc.close()
         logger.info(f"  {filename}: Pipeline complete.")
         return {"filename": filename, "chunks": len(chunks), "success": True}
 

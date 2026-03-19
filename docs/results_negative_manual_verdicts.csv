@@ -1,0 +1,65 @@
+Row,Query_snippet,Verdict,Note
+2,What documentation for off site storage of materials?,Response,Response gives concrete requirements; Previous "not found"
+3,What bases within Navy Region NW?,Response,Response names bases; Previous "under construction"
+4,who is the founder of govgig,Tie,Both decline to answer
+5,what did the GAO state on naval shipyards?,Response,Response summarizes GAO; Previous "under construction"
+6,detailed history of puget sound naval shipyard,Response,Response gives history; Previous "under construction"
+7,UXO at Camp Pendleton write serial letter,Response,Response = full letter with EM385 citations; Previous = steps + template
+8,is the document generator working yet?,Previous,Previous correctly states agent under construction
+9,FAR/DFARS risks construction scheduling,Previous,Previous has more scheduling-risk clauses (36.208 36.515 etc)
+10,What is a concurrent delay,Tie,Both explain well with FAR 52.242-17
+11,commissioning requirements pre-award,Previous,Previous addresses pre-award evaluation (FAR 36); Response off-topic
+12,punchlist requirements pre-award,Response,Response more directly addresses punchlist + FAR refs
+13,write delay letter NAVFAC outage disapproval,Response,Response = full letter; Previous "under construction"
+14,Why REA and not change order?,Previous,Previous clearer comparison (initiation authority circumstances)
+15,Document use and possession FAR beneficial occupancy,Response,Response has FAR 52.236-11; Previous says no specific clause
+16,difference between change order and REA,Response,Response has FAR 52.243-1/2/3
+17,safety incident what does government need from GC?,Previous,Previous has EM 385-1-1 ENG Form 3394 OSHA
+18,How do I calculate my daily rate?,Response,Response on-topic (FAR 52.216-9 42.704); Previous was safety incident (wrong)
+19,My prime isnt paying me,Response,Response has FAR 52.242-5 52.233-1
+20,draft letter KO 52.242-5 prime not paying,Response,Response = full letter; Previous "under construction"
+21,bonding requirements after award?,Response,Response has FAR 52.228-15/16 DFARS 252.217-7008
+22,CO and I disagree on change order next steps?,Response,Response has disputes 52.233-1 claim ADR; Previous "under construction"
+23,How appeal unsatisfactory CPARS?,Response,Response has steps; Previous empty
+24,documents for novation agreement?,Response,Response has actionable steps; Previous FAR 42.1204
+25,confirm scope aligns with solicitation and award?,Response,Response has FAR 36.303-1 52.214-6
+26,product substitution vs product variance?,Response,Response explains both; Previous empty
+27,contract clauses before project mobilization?,Previous,Previous more construction-focused (labor wage PLA)
+28,professional services REAs allowable costs?,Response,Response has FAR 31.205-33 31.201-2
+29,RFIs requirements pre-award,Response,Response on-topic FAR 15.203; Previous was REA cert (wrong)
+30,Can I appeal my CPARS rating?,Response,Response on-topic; Previous was outage letter (wrong)
+31,prepare for government preconstruction conference?,Response,Response FAR 52.236-13 EM385 17-7 27-7 8-7; Previous award-to-NTP
+32,What certification on my REA?,Tie,Both say no explicit cert recommend practice
+33,add FAR default clause to letter,Response,Response gives 52.249-10; Previous was wrong letter
+34,draft letter KO REA badge delay,Response,Response = full REA letter; Previous was award-to-NTP (wrong)
+35,denied outage request letter delays impacts,Response,Response = correct letter; Previous was oil tank RFI (wrong)
+36,actions between award and notice to proceed?,Response,Response on-topic 15.504 etc; Previous was property form (wrong)
+37,Add info time and cost impacts unknown,Tie,Neither directly on point
+38,Generate government property tracking form,Response,Response has FAR 52.245-1 submission; Previous was REA outline (wrong)
+39,documents review after federal construction award?,Response,Response on-topic; Previous was REA clauses (wrong)
+40,Draft REA for compensable delay,Response,Response = full REA draft; Previous outline only
+41,What FAR clauses basis for REA?,Response,Response 52.243 52.236-2 52.249-10; Previous different clauses
+42,recommend Government contracts attorney?,Tie,Both decline and suggest how to find
+43,export to word document,Response,Response gives generic export steps; Previous "under construction"
+44,gas line not on drawings now what?,Response,Response EM385 25-8 DFARS 252.236-7001
+45,deadline for filing a protest?,Previous,Previous has agency GAO Court + FAR 52.233-2
+46,roles federal construction QC manager?,Tie,Both substantive and similar
+47,vendor cannot match specifications?,Response,Response DFARS 252.236-7001 FAR 52.211-3 52.211-1
+48,Write RFI standard NAVFAC form,Response,Response = RFI draft with FAR refs; Previous template only
+49,rephrase FAR DFAR EM 385 requirements,Previous,Previous has EM385 25-8 utility; Response generic FAR list
+50,rights as contractor during debrief?,Response,Response FAR 15.505 detail
+51,how access process guidance agent,Tie,Both say under construction / contact support
+52,first 10 steps PM post award NAVFAC DBB,Response,Response has 10 steps with FAR refs; Previous "under construction"
+53,How upload submittal documents?,Response,Response DFARS EDA 204.270-1; Previous no platform access
+54,I want to upload the specifications,Tie,Both generic / under construction
+55,load the submittal registry,Response,Response explains no specific guidance; Previous "under construction"
+56,What is a PPI?,Previous,Previous defines Past Performance Information FAR 15.305
+57,submittals requirements pre-award,Response,Response DFARS 209.106 FAR 52.234-2; Previous "under construction"
+58,rfis requirements pre-award,Response,Response FAR 15.203; Previous "under construction"
+59,what does PM do federal construction?,Response,Response more comprehensive FAR 36.212 DFARS 222
+60,safety requirements post-award,Response,Response EM385 32-4 UFC DFARS 246.270-2; Previous also good
+61,oil tank not on drawings what do I do?,Response,Response FAR 52.236-2 steps; Previous generic
+62,What is SIOP?,Tie,Neither in regs; both say context-dependent
+63,Which FAR clause differing site conditions?,Previous,Previous includes full clause text (a)(b)(c)(d)
+64,FAR clause professional services?,Previous,Previous 52.222-41 with explanation; Response hedged
+65,standard project cost ranges government solicitation?,Response,Response DFARS 236.204 ranges; Previous "not found"

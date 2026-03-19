@@ -53,12 +53,14 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = "gpt-4o-mini"           # Model used for LLM reranking
     RERANKER_ENABLED: bool = True                 # Set False to skip LLM rerank, use RRF only
     RAG_TOKEN_LIMIT: int = 2400                   # Max tokens assembled into context for faster speed
-    RETRIEVAL_TOP_K: int = 12                     # Primary retrieval size for regulation_search path
-    REFLECTION_THRESHOLD: float = 0.50            # Heuristic confidence threshold before self-healing (stability + reflection trigger)
+    RETRIEVAL_TOP_K: int = 20                     # Primary retrieval size for regulation_search path
+    REFLECTION_THRESHOLD: float = 0.50            # Retrieval critique pass threshold (higher = stricter = more healing triggers)
     REFLECTION_HEALING_MARGIN: float = 0.05       # Skip retries for near-threshold borderline scores
     SELF_HEALING_SEARCH_K: int = 3                # Per expanded query search depth
     SELF_HEALING_MAX_QUERIES: int = 2             # Max expanded queries to execute
     SELF_HEALING_MAX_DOCS: int = 4                # Max additional docs added from self-healing
+    QUALITY_GATE_ENABLED: bool = True             # Post-synthesis quality gate: re-retrieves if answer confidence is low
+    QUALITY_GATE_THRESHOLD: float = 0.35          # confidence_score below this triggers quality-gate healing (0..1)
     MAX_DOC_CHARS_FOR_SYNTHESIS: int = 1200       # Per-document content trim before prompt assembly
     # LLM Models (separate concerns)
     # MODEL_NAME:       used for the DataRetrieval tool-selector fallback

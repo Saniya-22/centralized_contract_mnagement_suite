@@ -14,7 +14,7 @@ GovGig AI helps contractors and staff answer regulatory questions and generate c
 - **Answers** procedural and general questions with step-by-step or structured guidance (Synthesizer).
 - **Routes** document-type requests: only letter requests go to the Letter Drafter; checklist and form requests use the Synthesizer.
 
-The backend is **Python-only** (FastAPI, LangGraph, OpenAI). Node.js in `src/scripts/` is legacy/DB setup only.
+The backend is **Python-only** (FastAPI, LangGraph, OpenAI). Legacy Node.js code has been removed.
 
 ---
 
@@ -234,6 +234,26 @@ python pipeline.py
 ```
 
 See **docs/INGESTION_CHUNKING_STRATEGY.md** for chunking and table layout.
+
+### v2 chunking + safe re-ingest (recommended)
+
+Chunking Strategy v2 is implemented in `ingest_python/pipeline.py` and stores additional fields in `metadata` (JSONB):
+- `is_anchor` for anchor-enriched chunks
+- `type="table"`, `table_text`, `table_structured` for Docling tables
+- `clause_references` (used for ranked reference expansion at retrieval)
+
+To avoid overwriting (or leaving stale rows behind) in your existing index, ingest v2 into a **new namespace** and then switch the backend to read from it.
+
+1) **Re-ingest into a new namespace**
+
+```bash
+# One-command index build (uses venv + .env/env vars)
+bash scripts/index_regulations_v2.sh
+```
+
+2) **Switch the backend to the v2 namespace**
+
+Set `REGULATIONS_NAMESPACE=public-regulations-v2` in your backend `.env` (read by `src/config.py`), then restart the server.
 
 ---
 

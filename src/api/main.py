@@ -127,8 +127,10 @@ class QueryResponse(BaseModel):
     response: str
     documents: List[Dict[str, Any]]
     confidence: Optional[float] = None
+    mode: Optional[str] = None  # grounded | copilot | refusal | clarify
     quality_metrics: Optional[Dict[str, Any]] = None
     low_confidence: Optional[bool] = None
+    reflection_triggered: Optional[bool] = None
     agent_path: List[str]
     thought_process: Optional[List[str]] = None
     regulation_types: List[str]
@@ -563,9 +565,11 @@ def _log_analytics_from_result(
         "intent": _extract_intent_from_result(result),
         "regulation_types": result.get("regulation_types", []),
         "confidence": result.get("confidence"),
+        "mode": result.get("mode"),
         "quality_metrics": result.get("quality_metrics"),
         "low_confidence": result.get("low_confidence"),
         "doc_count": len(result.get("documents", [])),
+        "reflection_triggered": bool(result.get("reflection_triggered")),
         "agent_path": result.get("agent_path", []),
         "errors": result.get("errors", []),
         "was_cached": was_cached,

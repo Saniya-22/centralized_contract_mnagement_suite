@@ -108,6 +108,7 @@ class DataRetrievalAgent(BaseAgent):
         new_agent_path: List[str]            = []
         new_thoughts:   List[str]            = []
         new_errors:     List[str]            = []
+        reflection_triggered: bool = False
 
         def _log(msg: str):
             entry = f"{self.name}: {msg}"
@@ -197,6 +198,7 @@ class DataRetrievalAgent(BaseAgent):
                         fail_reason=critique["reason"],
                         search_func=_search_wrapper
                     )
+                    reflection_triggered = True
                     
                     if healed_docs:
                         _log(f"Self-healing: Added {len(healed_docs)} supplemental documents")
@@ -227,6 +229,7 @@ class DataRetrievalAgent(BaseAgent):
             "tool_calls":            new_tool_calls,
             "regulation_types_used": new_reg_types,
             "agent_path":            new_agent_path,
+            "reflection_triggered":  reflection_triggered,
         }
         if new_thoughts:
             delta["thought_process"] = new_thoughts

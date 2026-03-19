@@ -1,5 +1,6 @@
 # Core Dependencies
 PyMuPDF==1.26.7
+docling
 openai==1.109.1
 asyncpg==0.31.0
 SQLAlchemy==2.0.44

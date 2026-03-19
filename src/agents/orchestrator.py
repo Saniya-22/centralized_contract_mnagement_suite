@@ -4,6 +4,7 @@ from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from typing import Literal, AsyncIterator, Dict, Any
+import asyncio
 import logging
 from datetime import datetime
 import re
@@ -40,10 +41,39 @@ class GovGigOrchestrator:
         "under", "over", "between", "within", "through", "into", "onto", "our", "out",
         "per", "via", "use", "using", "used", "being", "been", "more", "most",
     }
-    _LOW_CONFIDENCE_LABEL = (
-        "Our system is still expanding its coverage here. Where it's critical, we recommend confirming with your contract or CO.\n\n"
-    )
+    # Intentionally left blank: defensive/system language is not shown to users.
+    _LOW_CONFIDENCE_LABEL = ""
     _SAFETY_REVIEW_LABEL = "Safety review notice: {reason}\n\n"
+
+    @staticmethod
+    def _decide_mode(
+        *,
+        next_agent: str | None,
+        intent_value: str | None,
+        doc_count: int,
+        confidence: float | None,
+    ) -> str:
+        """Decide system mode (first-class behavior abstraction).
+
+        Order matters:
+          1) clarify
+          2) out_of_scope
+          3) no docs
+          4) grounded (high confidence)
+          5) copilot (default)
+        """
+        if str(next_agent or "").lower() == "clarifier":
+            return "clarify"
+        if str(intent_value or "").lower() == QueryIntent.OUT_OF_SCOPE.value:
+            return "copilot"
+        if str(intent_value or "").lower() == QueryIntent.CLAUSE_LOOKUP.value and int(doc_count or 0) > 0:
+            # Clause lookups are inherently grounded when we have retrieved clause text.
+            return "grounded"
+        if int(doc_count or 0) <= 0:
+            return "refusal"
+        if confidence is not None and float(confidence) >= 0.45:
+            return "grounded"
+        return "copilot"
     
     def __init__(self, checkpointer=None):
         logger.info("Initializing GovGigOrchestrator")
@@ -155,9 +185,10 @@ class GovGigOrchestrator:
         if not doc_tokens:
             return 0.0
         overlap = response_tokens & doc_tokens
-        union = response_tokens | doc_tokens
-        # Jaccard: overlap/union so generic verbosity (many words not in docs) gets lower score
-        return len(overlap) / len(union) if union else 0.0
+        # Recall-based: what fraction of response words are grounded in the docs.
+        # Unlike Jaccard (overlap/union), this doesn't penalize good paraphrasing
+        # or procedural guidance language that doesn't appear verbatim in regulation text.
+        return len(overlap) / len(response_tokens)
 
     def _assess_answer_quality(
         self,
@@ -165,72 +196,94 @@ class GovGigOrchestrator:
         documents: list[dict],
         evidence: dict[str, float],
         state: GovGigState,
-    ) -> dict[str, float | bool]:
+    ) -> Dict[str, Any]:
         citation_coverage, has_claims = self._citation_coverage(response_text)
         groundedness = self._groundedness_score(response_text, documents)
         evidence_avg = float(evidence.get("avg_norm", 0.0))
+        query_text = str(state.get("query") or "")
         is_clause_lookup = (
             state.get("query_intent") == QueryIntent.CLAUSE_LOOKUP.value
             or bool(state.get("detected_clause_ref"))
         )
         is_procedural = bool(state.get("is_procedural", False))
+        is_document_request = bool(state.get("is_document_request", False))
+        is_comparison = bool(state.get("is_comparison", False))
+        is_construction_lifecycle = bool(state.get("is_construction_lifecycle", False))
+        is_schedule_risk = bool(state.get("is_schedule_risk", False))
+        is_definition = bool(
+            re.match(r"(?i)^\s*what\s+is\s+[A-Z]{2,8}\s*\??\s*$", query_text)
+            or re.match(r"(?i)^\s*define\s+[A-Z]{2,8}\s*\??\s*$", query_text)
+        )
         min_docs = 1.0 if is_clause_lookup else 2.0
 
-        # Procedural/analytical: reweight toward evidence + grounding; citation bar lower
-        citation_bar = 0.35 if is_procedural else 0.42
-        if is_procedural:
+        # ── Conditional thresholds by query type ──────────────────────────────
+        # Procedural/definition/document/comparison/construction/schedule-risk requests often have lower
+        # measured groundedness/citations even when they are useful and correct.
+        relaxed = bool(is_procedural or is_document_request or is_definition
+                       or is_comparison or is_construction_lifecycle or is_schedule_risk)
+        groundedness_threshold = 0.25 if relaxed else 0.42
+        citation_bar = 0.30 if relaxed else 0.42
+        quality_bar = 0.46 if relaxed else 0.52
+
+        # ── Quality score (kept for analytics, but no longer a single tripwire) ─
+        # Emphasize evidence + groundedness; citations help but shouldn't dominate for relaxed queries.
+        if relaxed:
             quality_score = (
                 0.45 * evidence_avg
-                + 0.40 * groundedness
-                + 0.15 * citation_coverage
+                + 0.35 * groundedness
+                + 0.20 * citation_coverage
             )
-            quality_bar = 0.50
         else:
             quality_score = (
-                0.40 * evidence_avg
-                + 0.35 * groundedness
+                0.45 * evidence_avg
+                + 0.30 * groundedness
                 + 0.25 * citation_coverage
             )
-            quality_bar = 0.52
 
-        # Soft guardrails: when we didn't measure citation (no claim units), don't fail on citation_bar
-        low_confidence = bool(
-            evidence.get("doc_count", 0.0) < min_docs
-            or evidence_avg < 0.18
-            or groundedness < 0.42
-            or (has_claims and citation_coverage < citation_bar)
-            or quality_score < quality_bar
+        # ── Weighted confidence score (0..1) ──────────────────────────────────
+        # Production rule: avoid binary OR tripwires; compute a score, then decide.
+        confidence_score = (
+            0.45 * evidence_avg
+            + 0.25 * groundedness
+            + 0.20 * citation_coverage
+            + 0.10 * min(max(quality_score, 0.0), 1.0)
         )
-        # Don't over-apply: high evidence = trust the answer, avoid notice
-        if evidence_avg >= 0.80:
-            low_confidence = False
-        elif evidence_avg >= 0.75:
-            low_confidence = False
-        elif is_clause_lookup and evidence.get("doc_count", 0) >= 1 and evidence_avg >= 0.70:
-            low_confidence = False
-        elif evidence_avg >= 0.70 and citation_coverage >= 0.80:
-            low_confidence = False
-        elif evidence_avg >= 0.62 and groundedness >= 0.48:
-            # Solid evidence + decent grounding: skip notice (reduces false low-confidence for analytical)
-            low_confidence = False
-        elif state.get("is_document_request") and evidence.get("doc_count", 0) >= 2 and evidence_avg >= 0.55:
-            # Letter/REA/RFI draft with enough docs: avoid notice (drafts are less citation-dense by design)
-            low_confidence = False
+        confidence_score = float(min(max(confidence_score, 0.0), 1.0))
+
+        # ── Low-confidence decision ───────────────────────────────────────────
+        # Single composite gate: flag only when BOTH the weighted score AND the
+        # raw evidence strength are genuinely weak, or when no docs exist at all.
+        # This eliminates the 83% false-alarm rate caused by the old 5-way OR chain.
+        hard_failure = bool(evidence.get("doc_count", 0.0) < min_docs)
+        low_confidence = bool(
+            hard_failure
+            or (confidence_score < 0.30 and evidence_avg < 0.35)
+        )
+
+        # ── Banner gating (UX) ────────────────────────────────────────────────
+        # Banner is the user-visible trust signal. Only show when evidence is
+        # truly absent or confidence is very low — never on borderline cases.
+        in_scope = not (state.get("query_intent") == QueryIntent.OUT_OF_SCOPE.value)
+        show_banner = bool(
+            evidence.get("doc_count", 0.0) <= 0.0
+            or (in_scope and low_confidence and confidence_score < 0.25)
+        )
 
         return {
             "citation_coverage": round(citation_coverage, 4),
             "groundedness_score": round(groundedness, 4),
             "evidence_score": round(evidence_avg, 4),
-            "quality_score": round(quality_score, 4),
-            "low_confidence": low_confidence,
+            "quality_score": round(float(min(max(quality_score, 0.0), 1.0)), 4),
+            "confidence_score": round(confidence_score, 4),
+            "low_confidence": bool(low_confidence),
+            "show_banner": bool(show_banner),
         }
 
-    def _with_low_confidence_label(self, response_text: str, low_confidence: bool) -> str:
-        if not low_confidence:
-            return response_text
-        if response_text.startswith(self._LOW_CONFIDENCE_LABEL):
-            return response_text
-        return f"{self._LOW_CONFIDENCE_LABEL}{response_text}"
+    def _with_low_confidence_label(self, response_text: str, show_banner: bool) -> str:
+        # Banner text was intentionally removed to avoid defensive system language.
+        # `show_banner` is retained for UI gating/telemetry, but we no longer prepend
+        # any boilerplate to the user-visible response.
+        return response_text
 
     def _with_safety_review_label(self, response_text: str, reason: str) -> str:
         reason_text = (reason or "Automated guardrails flagged policy risk.").strip()
@@ -242,16 +295,22 @@ class GovGigOrchestrator:
     @staticmethod
     def _safe_fallback_message() -> str:
         return (
-            "I don’t have sufficient high-confidence evidence in the retrieved regulatory text "
-            "to provide a reliable answer. Please refine the query with regulation type/section "
-            "(e.g., FAR/DFARS/EM385 clause), and I’ll return a fully cited response."
+            "The retrieved regulatory excerpts do not directly address this specific question.\n\n"
+            "**General guidance (not a substitute for the actual contract/regulation):**\n"
+            "As a general practice under federal construction contracts, contractors should:\n"
+            "1. Review the contract terms, specifications, and any modifications for requirements specific to this issue.\n"
+            "2. Consult the Contracting Officer (CO) or Contracting Officer’s Representative (COR) for clarification.\n"
+            "3. Document all relevant conditions, communications, and actions taken.\n"
+            "4. If a potential claim or entitlement exists, preserve notice rights per the applicable Disputes clause (typically FAR 52.233-1).\n\n"
+            "⚠️ The above is general contractor guidance, not a specific regulatory requirement. "
+            "Always verify against your contract and applicable regulations."
         )
 
     @staticmethod
     def _safe_blocked_message() -> str:
         return (
             "I can’t provide that response because automated safety guardrails flagged it. "
-            "Please rephrase with a narrower, regulation-focused request."
+            "If you want help, share the relevant contract/regulation text or ask for a general compliance summary."
         )
     
     def _build_graph(self) -> StateGraph:
@@ -260,9 +319,11 @@ class GovGigOrchestrator:
 
         # Add nodes
         workflow.add_node("router", self._route_query)
+        workflow.add_node("clarifier", self._clarify_query)
         workflow.add_node("data_retrieval", self.data_retrieval.run)
         workflow.add_node("letter_drafter", self._draft_letter)
         workflow.add_node("synthesizer", self._synthesize_response)
+        workflow.add_node("quality_gate", self._quality_gate)
 
         # Set entry point
         workflow.set_entry_point("router")
@@ -273,10 +334,14 @@ class GovGigOrchestrator:
             self._determine_next_agent,
             {
                 "data_retrieval": "data_retrieval",
+                "clarifier": "clarifier",
                 "synthesizer": "synthesizer",
                 "end": END
             }
         )
+
+        # Clarifier goes to END (asks user for more info)
+        workflow.add_edge("clarifier", END)
 
         # After data_retrieval: route to letter_drafter (document request) or synthesizer
         workflow.add_conditional_edges(
@@ -288,13 +353,50 @@ class GovGigOrchestrator:
             }
         )
 
-        # Both letter_drafter and synthesizer go to END
+        # Letter drafter goes directly to END (no quality gate for drafts)
         workflow.add_edge("letter_drafter", END)
-        workflow.add_edge("synthesizer", END)
+
+        # Synthesizer → quality_gate → END or re-synthesize (max 1 retry)
+        workflow.add_edge("synthesizer", "quality_gate")
+        workflow.add_conditional_edges(
+            "quality_gate",
+            self._after_quality_gate,
+            {
+                "synthesizer": "synthesizer",
+                "end": END,
+            }
+        )
 
         logger.info("LangGraph workflow built")
         return workflow
     
+    # Patterns for product/UI queries that should be intercepted by the clarifier.
+    # Keep these HIGH-precision to avoid false positives on in-scope queries like:
+    # "As a Project Manager... recommend actions..."
+    _PRODUCT_UI_SIGNALS: tuple[str, ...] = (
+        # Platform / UI actions (explicit)
+        "upload submittal", "upload submittals",
+        "upload document", "upload documents",
+        "upload the specifications", "upload specifications",
+        "load submittal registry", "load the submittal registry",
+        "export to word", "export to pdf", "export the response",
+        "download the response", "download response",
+
+        # Account/auth
+        "log in", "login", "sign in", "sign-in",
+        "sign up", "signup", "my account",
+
+        # Referrals (explicit)
+        "recommend an attorney", "recommend a lawyer",
+        "government contracts attorney", "government contracts lawyer",
+        "find an attorney", "find a lawyer",
+    )
+
+    # Role/persona prompts are considered in-scope; never treat them as product/UI.
+    _ROLEPLAY_PREFIX_RE = re.compile(
+        r"(?i)^\s*as\s+a\s+(project\s+manager|project\s+executive|qcm|quality\s+control\s+manager|superintendent)\b"
+    )
+
     async def _route_query(self, state: GovGigState) -> Dict[str, Any]:
         """Route the query using the deterministic QueryClassifier."""
         import time as _time
@@ -302,6 +404,17 @@ class GovGigOrchestrator:
         
         query = state["query"]
         logger.info(f"[Router] Classifying query: '{query[:100]}...'")
+
+        # ── Fix 4: Extract clause/reg context from prior conversation ─────────
+        chat_history = state.get("chat_history") or []
+        prior_clause_ref = None
+        for msg in reversed(chat_history[-4:]):
+            if msg.get("role") == "assistant":
+                content = msg.get("content") or ""
+                clause_hit = self._CITATION_RE.search(content)
+                if clause_hit:
+                    prior_clause_ref = clause_hit.group(0)
+                    break
 
         classification = await classify_query(query)
         intent         = classification.intent
@@ -318,55 +431,151 @@ class GovGigOrchestrator:
             f"next={next_agent}, clause_ref={classification.clause_reference}"
         )
 
+        detected_clause_ref = classification.clause_reference
+        detected_reg_type   = classification.regulation_type
+
+        # Fix 4: Inherit clause context from prior turn for short follow-up queries
+        if (intent == QueryIntent.REGULATION_SEARCH
+                and classification.confidence < 0.7
+                and not detected_clause_ref
+                and prior_clause_ref
+                and len(query.split()) < 12):
+            detected_clause_ref = prior_clause_ref
+            logger.info(f"[Router] Inherited clause context '{prior_clause_ref}' from prior turn")
+
         delta: Dict[str, Any] = {
             "next_agent":          next_agent,
             "reasoning":           f"QueryClassifier: intent={intent.value} confidence={classification.confidence:.2f}",
             "query_intent":        intent.value,
-            "detected_clause_ref": classification.clause_reference,
-            "detected_reg_type":   classification.regulation_type,
+            "detected_clause_ref": detected_clause_ref,
+            "detected_reg_type":   detected_reg_type,
             "is_procedural":        classification.is_procedural,
             "is_contract_co":       classification.is_contract_co,
             "is_document_request":   classification.is_document_request,
             "document_request_type": getattr(classification, "document_request_type", None),
+            "is_comparison":              classification.is_comparison,
+            "is_construction_lifecycle":  classification.is_construction_lifecycle,
+            "is_schedule_risk":           classification.is_schedule_risk,
+            "mode": None,
             "agent_path": [
                 f"Router: intent={intent.value} conf={classification.confidence:.2f} "
-                + (f"ref='{classification.clause_reference}' " if classification.clause_reference else "")
-                + (f" proc={classification.is_procedural} co={classification.is_contract_co} doc={classification.is_document_request} " if (classification.is_procedural or classification.is_contract_co or classification.is_document_request) else "")
+                + (f"ref='{detected_clause_ref}' " if detected_clause_ref else "")
+                + (f"inherited_from_prior " if (detected_clause_ref and not classification.clause_reference) else "")
+                + (f" proc={classification.is_procedural} co={classification.is_contract_co} doc={classification.is_document_request}"
+                   f" comp={classification.is_comparison} const={classification.is_construction_lifecycle} sched_risk={classification.is_schedule_risk} "
+                   if (classification.is_procedural or classification.is_contract_co or classification.is_document_request
+                       or classification.is_comparison or classification.is_construction_lifecycle or classification.is_schedule_risk)
+                   else "")
                 + f"→ {next_agent}"
             ],
         }
 
+        # ── Fix 5: Route to clarifier for ambiguous/product queries ───────────
+        if intent == QueryIntent.REGULATION_SEARCH and not classification.clause_reference:
+            q_lower = query.lower()
+            query_words = len(query.split())
+            is_roleplay = bool(self._ROLEPLAY_PREFIX_RE.search(query))
+            is_product_ui = (not is_roleplay) and any(sig in q_lower for sig in self._PRODUCT_UI_SIGNALS)
+            is_too_short = query_words <= 5 and not detected_clause_ref
+            if is_product_ui or is_too_short:
+                delta["next_agent"] = "clarifier"
+                delta["mode"] = "clarify"
+                delta["agent_path"] = [
+                    delta["agent_path"][0].replace(f"→ {next_agent}", "→ clarifier")
+                ]
+
+        # ── Acronym disambiguation (improves UX + avoids weak/hallucinated definitions) ──
+        m = re.match(r"(?i)^\s*what\s+is\s+(?:a\s+|an\s+)?([A-Z]{2,8})\s*\??\s*$", query.strip())
+        if m and intent == QueryIntent.REGULATION_SEARCH and not classification.clause_reference:
+            acr = m.group(1).upper()
+            options = []
+            if acr == "PPI":
+                options = [
+                    "Past Performance Information (common in FAR source selection / past performance context)",
+                    "Producer Price Index (economics / escalation index)",
+                    "Pre-Purchase Inspection (quality/inspection context)",
+                ]
+            elif acr == "SIOP":
+                options = [
+                    "Sales, Inventory & Operations Planning (business operations)",
+                    "A project/program-specific acronym defined in your contract specs (common in federal projects)",
+                ]
+            else:
+                options = [
+                    "A contract/regulation-specific acronym defined in your solicitation/specs",
+                    "A general industry acronym (meaning varies by domain)",
+                ]
+            delta["generated_response"] = (
+                f"“{acr}” can mean multiple things depending on context. Which one do you mean?\n\n"
+                + "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
+                + "\n\nIf you share the sentence/section where it appears (or whether this is FAR/DFARS/EM385 vs your contract specs), I can answer precisely."
+            )
+            delta["next_agent"] = "end"
+            delta["mode"] = "clarify"
+            # Update the last agent_path entry to reflect early exit (keeps path=regulation_search)
+            delta["agent_path"] = delta["agent_path"] + [f"Router: acronym_disambiguation acr={acr} → end"]
+            return delta
+
         if intent == QueryIntent.OUT_OF_SCOPE and not classification.is_document_request:
-            # Direct LLM call: answer briefly from general knowledge + polite scope notification
+            query_lower = query.lower()
+
+            # -------------------------
+            # SYSTEM / PRODUCT QUERIES
+            # -------------------------
+            if any(k in query_lower for k in ["upload", "export", "generator", "dashboard", "agent"]):
+                delta["generated_response"] = (
+                    "This appears to be a product/system-related question.\n\n"
+                    "The current interface supports chat-based querying and evidence viewing. "
+                    "Direct document upload or export features may not be available in this interface.\n\n"
+                    "If you need to work with documents, please check with your administrator or refer to platform documentation."
+                )
+                delta["mode"] = "copilot"
+                delta["confidence"] = "low"
+                return delta
+
+            # -------------------------
+            # GENERAL (OOS → Copilot)
+            # -------------------------
             try:
+                system_prompt = get_oos_response_prompt(state)
+
                 messages = [
-                    SystemMessage(content=get_oos_response_prompt(state)),
+                    SystemMessage(content=system_prompt),
                     HumanMessage(content=query),
                 ]
-                oos_response = await self.synthesizer_llm.ainvoke(messages)
-                delta["generated_response"] = (oos_response.content or "").strip()
-            except Exception as e:
-                logger.warning(f"[Router] OOS LLM call failed: {e}, using fallback message")
+
+                resp = self.synthesizer_llm.invoke(messages)
+
+                delta["generated_response"] = resp.content
+                delta["mode"] = "copilot"
+                delta["confidence"] = "low"
+
+            except Exception:
                 delta["generated_response"] = (
-                    "This question is outside my main area. I'm specialized in FAR, DFARS, EM385, OSHA, and related regulatory frameworks—ask me about those for more accurate answers."
+                    "This question appears to be outside the regulatory corpus. "
+                    "I may not have verified sources, but I can still provide general guidance if helpful."
                 )
+                delta["mode"] = "copilot"
+                delta["confidence"] = "low"
+
+            return delta
 
         return delta
     
     def _determine_next_agent(
         self, 
         state: GovGigState
-    ) -> Literal["data_retrieval", "synthesizer", "end"]:
+    ) -> Literal["data_retrieval", "clarifier", "synthesizer", "end"]:
         """Determine the next agent based on routing decision."""
         next_agent = state.get('next_agent', 'data_retrieval')
         
-        # For Phase 1, we only have data_retrieval implemented
         if next_agent == 'data_retrieval':
             return "data_retrieval"
+        elif next_agent == 'clarifier':
+            return "clarifier"
         elif next_agent == 'end':
             return "end"
         else:
-            # Other agents not yet implemented, go directly to synthesizer
             logger.warning(f"Agent {next_agent} not implemented, going to synthesizer")
             return "synthesizer"
 
@@ -377,6 +586,113 @@ class GovGigOrchestrator:
         if state.get("is_document_request"):
             return "letter_drafter"
         return "synthesizer"
+
+    # ── Post-synthesis quality gate ──────────────────────────────────────────
+
+    async def _quality_gate(self, state: GovGigState) -> Dict[str, Any]:
+        """Post-synthesis quality gate.
+
+        If the synthesiser's confidence_score is below QUALITY_GATE_THRESHOLD
+        and no reflection retry has been attempted yet, trigger healing
+        retrieval so the synthesiser can re-run with richer context.
+        """
+        noop: Dict[str, Any] = {"quality_gate_healing": False}
+
+        if not settings.QUALITY_GATE_ENABLED:
+            return {**noop, "agent_path": ["QualityGate: disabled"]}
+
+        retries = state.get("reflection_retries") or 0
+        if retries > 0:
+            return {**noop, "agent_path": ["QualityGate: skip (already retried)"]}
+
+        confidence = state.get("confidence_score") or 0.0
+        if confidence >= settings.QUALITY_GATE_THRESHOLD:
+            return {**noop, "agent_path": [f"QualityGate: pass (confidence={confidence:.2f} >= {settings.QUALITY_GATE_THRESHOLD})"]}
+
+        mode = state.get("mode")
+        if mode in ("refusal", "clarify"):
+            return {**noop, "agent_path": [f"QualityGate: skip (mode={mode})"]}
+
+        already_healed = state.get("reflection_triggered") or False
+        if already_healed:
+            return {**noop, "agent_path": ["QualityGate: skip (already healed at retrieval)"]}
+
+        query = state.get("query", "")
+        detected_reg_type = state.get("detected_reg_type")
+
+        async def _search_wrapper(q: str):
+            search_args = {"query": q, "k": settings.SELF_HEALING_SEARCH_K}
+            if detected_reg_type:
+                search_args["regulation_type"] = detected_reg_type
+            return await asyncio.to_thread(
+                self.data_retrieval.vector_search_tool.search_regulations.invoke,
+                search_args,
+            )
+
+        healed_docs = await self.data_retrieval.reflection_manager.heal_search(
+            query=query,
+            fail_reason=(
+                f"Post-synthesis quality gate: confidence={confidence:.2f} "
+                f"below threshold={settings.QUALITY_GATE_THRESHOLD}"
+            ),
+            search_func=_search_wrapper,
+        )
+
+        delta: Dict[str, Any] = {
+            "quality_gate_healing": True,
+            "reflection_retries": 1,
+            "reflection_triggered": True,
+            "agent_path": [
+                f"QualityGate: confidence={confidence:.2f} < "
+                f"{settings.QUALITY_GATE_THRESHOLD} → healing triggered, "
+                f"added {len(healed_docs)} supplemental docs"
+            ],
+        }
+        if healed_docs:
+            delta["retrieved_documents"] = healed_docs
+        return delta
+
+    def _after_quality_gate(
+        self, state: GovGigState
+    ) -> Literal["synthesizer", "end"]:
+        """Route back to synthesiser only when quality_gate just triggered healing."""
+        if state.get("quality_gate_healing"):
+            return "synthesizer"
+        return "end"
+
+    def _clarify_query(self, state: GovGigState) -> Dict[str, Any]:
+        """Intercept ambiguous or product/UI queries and ask for clarification."""
+        query = state.get("query", "")
+        q_lower = query.lower()
+
+        is_product_ui = any(sig in q_lower for sig in self._PRODUCT_UI_SIGNALS)
+
+        if is_product_ui:
+            return {
+                "generated_response": (
+                    "That sounds like a question about using the platform rather than "
+                    "a regulation. Could you clarify?\n\n"
+                    "- If you're asking about a **regulatory requirement** "
+                    "(e.g., submittal requirements under FAR/DFARS), I can help with that.\n"
+                    "- If you're asking about **how to use this tool**, that's outside "
+                    "my scope — please contact support."
+                ),
+                "agent_path": ["Clarifier: product/UI query detected → asking for clarification"],
+                "mode": "clarify",
+            }
+
+        return {
+            "generated_response": (
+                f"Your question \"{query}\" is a bit brief for me to give a precise, "
+                "regulation-backed answer. Could you add a bit more context?\n\n"
+                "For example:\n"
+                "- Which regulation area? (FAR, DFARS, EM385, OSHA)\n"
+                "- What's the project or contract situation?\n"
+                "- Are you asking about a specific clause or a general requirement?"
+            ),
+            "agent_path": ["Clarifier: short/ambiguous query → asking for context"],
+            "mode": "clarify",
+        }
 
     def _draft_letter(self, state: GovGigState) -> Dict[str, Any]:
         """Produce a full letter/document draft from retrieved documents. Used when is_document_request is True."""
@@ -397,8 +713,15 @@ class GovGigOrchestrator:
 
             if not documents:
                 new_agent_path.append("LetterDrafter: No documents — returning fallback")
+                mode = self._decide_mode(
+                    next_agent="end",
+                    intent_value=state.get("query_intent"),
+                    doc_count=0,
+                    confidence=None,
+                )
                 return {
                     "generated_response": self._safe_fallback_message(),
+                    "mode": mode,
                     "quality_metrics": {
                         "citation_coverage": 0.0,
                         "groundedness_score": 0.0,
@@ -415,7 +738,14 @@ class GovGigOrchestrator:
             )
             evidence = self._evidence_summary(documents)
             formatted_docs = format_documents(documents, max_tokens=settings.RAG_TOKEN_LIMIT)
-            system_prompt = get_letter_drafter_prompt(state, documents)
+            mode_for_prompt = self._decide_mode(
+                next_agent="end",
+                intent_value=state.get("query_intent"),
+                doc_count=len(documents),
+                confidence=None,
+            )
+            state_for_prompt = {**state, "mode": mode_for_prompt}
+            system_prompt = get_letter_drafter_prompt(state_for_prompt, documents)
             user_message = (
                 f"Retrieved Documents:\n{formatted_docs}\n\n"
                 f"User Request: {state['query']}"
@@ -450,6 +780,7 @@ class GovGigOrchestrator:
                     block_mode = str(settings.SOVEREIGN_GUARD_BLOCK_MODE or "soft").lower()
                     if block_mode == "hard":
                         final_response = self._safe_blocked_message()
+                        quality_metrics["mode_override"] = "refusal"
                         new_agent_path.append(
                             "LetterDrafter: Sovereign guard BLOCK applied (hard mode)"
                         )
@@ -469,8 +800,17 @@ class GovGigOrchestrator:
                     new_agent_path.append("LetterDrafter: Sovereign guard ALLOW")
 
             final_response = self._with_low_confidence_label(
-                final_response, bool(quality_metrics["low_confidence"])
+                final_response, bool(quality_metrics.get("show_banner"))
             )
+            mode = self._decide_mode(
+                next_agent="end",
+                intent_value=state.get("query_intent"),
+                doc_count=len(documents),
+                confidence=float(quality_metrics.get("confidence_score") or 0.0),
+            )
+            if quality_metrics.get("mode_override") == "refusal":
+                mode = "refusal"
+            quality_metrics["mode"] = mode
 
             elapsed = _time.perf_counter() - _t0_node
             logger.info(f"[Telemetry] Node 'letter_drafter' completed in {elapsed:.2f}s")
@@ -484,7 +824,8 @@ class GovGigOrchestrator:
 
             return {
                 "generated_response": final_response,
-                "confidence_score": float(evidence.get("avg_norm", 0.0)),
+                "confidence_score": float(quality_metrics.get("confidence_score") or evidence.get("avg_norm", 0.0)),
+                "mode": mode,
                 "quality_metrics": quality_metrics,
                 "low_confidence": bool(quality_metrics["low_confidence"]),
                 "agent_path": new_agent_path,
@@ -496,6 +837,7 @@ class GovGigOrchestrator:
             new_agent_path.append(f"LetterDrafter: ERROR — {exc}")
             return {
                 "generated_response": "An error occurred while generating the draft. Please try again.",
+                "mode": "refusal",
                 "quality_metrics": {
                     "citation_coverage": 0.0,
                     "groundedness_score": 0.0,
@@ -538,8 +880,15 @@ class GovGigOrchestrator:
             if not documents:
                 logger.warning("No documents retrieved, providing fallback response")
                 new_agent_path.append("Synthesizer: No documents — returning fallback")
+                mode = self._decide_mode(
+                    next_agent="end",
+                    intent_value=state.get("query_intent"),
+                    doc_count=0,
+                    confidence=None,
+                )
                 return {
                     "generated_response": self._safe_fallback_message(),
+                    "mode": mode,
                     "quality_metrics": {
                         "citation_coverage": 0.0,
                         "groundedness_score": 0.0,
@@ -559,7 +908,14 @@ class GovGigOrchestrator:
             )
 
             formatted_docs = format_documents(documents, max_tokens=settings.RAG_TOKEN_LIMIT)
-            system_prompt   = get_synthesizer_prompt(state, documents, evidence_summary=evidence)
+            mode_for_prompt = self._decide_mode(
+                next_agent="end",
+                intent_value=state.get("query_intent"),
+                doc_count=len(documents),
+                confidence=None,
+            )
+            state_for_prompt = {**state, "mode": mode_for_prompt}
+            system_prompt   = get_synthesizer_prompt(state_for_prompt, documents, evidence_summary=evidence)
 
             user_message = (
                 f"Retrieved Documents:\n{formatted_docs}\n\n"
@@ -603,6 +959,7 @@ class GovGigOrchestrator:
                     if block_mode == "hard":
                         final_response = self._safe_blocked_message()
                         hard_block_applied = True
+                        quality_metrics["mode_override"] = "refusal"
                         new_agent_path.append(
                             "Synthesizer: Sovereign guard BLOCK applied (hard mode)"
                         )
@@ -624,8 +981,17 @@ class GovGigOrchestrator:
             if not hard_block_applied:
                 final_response = self._with_low_confidence_label(
                     final_response,
-                    bool(quality_metrics["low_confidence"]),
+                    bool(quality_metrics.get("show_banner")),
                 )
+            mode = self._decide_mode(
+                next_agent="end",
+                intent_value=state.get("query_intent"),
+                doc_count=len(documents),
+                confidence=float(quality_metrics.get("confidence_score") or 0.0),
+            )
+            if quality_metrics.get("mode_override") == "refusal":
+                mode = "refusal"
+            quality_metrics["mode"] = mode
 
             elapsed = _time.perf_counter() - _t0_node
             logger.info(f"[Telemetry] Node 'synthesizer' completed in {elapsed:.2f}s")
@@ -644,7 +1010,8 @@ class GovGigOrchestrator:
 
             return {
                 "generated_response": final_response,
-                "confidence_score":   float(evidence.get("avg_norm", 0.0)),
+                "confidence_score":   float(quality_metrics.get("confidence_score") or evidence.get("avg_norm", 0.0)),
+                "mode": mode,
                 "quality_metrics":    quality_metrics,
                 "low_confidence":     bool(quality_metrics["low_confidence"]),
                 "agent_path":         new_agent_path,
@@ -656,6 +1023,7 @@ class GovGigOrchestrator:
             new_agent_path.append(f"Synthesizer: ERROR — {exc}")
             return {
                 "generated_response": "An error occurred while generating the response. Please try again.",
+                "mode": "refusal",
                 "quality_metrics": {
                     "citation_coverage": 0.0,
                     "groundedness_score": 0.0,
@@ -714,15 +1082,22 @@ class GovGigOrchestrator:
             "is_contract_co": None,
             "is_document_request": None,
             "document_request_type": None,
+            "is_comparison": None,
+            "is_construction_lifecycle": None,
+            "is_schedule_risk": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
             "thought_process": [],
             "agent_path": [],
+            "mode": None,
             "quality_metrics": None,
             "low_confidence": None,
             "ui_action": None,
             "regulation_types_used": [],
+            "reflection_triggered": False,
+            "reflection_retries": 0,
+            "quality_gate_healing": False,
             "errors": []
         }
 
@@ -748,8 +1123,10 @@ class GovGigOrchestrator:
             "response":        response_text,
             "documents":       [] if is_out_of_scope else documents,
             "confidence":      result.get("confidence_score"),
+            "mode":           result.get("mode"),
             "quality_metrics": result.get("quality_metrics"),
             "low_confidence":  result.get("low_confidence"),
+            "reflection_triggered": bool(result.get("reflection_triggered")),
             "agent_path":      agent_path,
             "thought_process": thought_proc if result.get("cot_enabled") else None,
             "regulation_types": reg_types,
@@ -810,15 +1187,22 @@ class GovGigOrchestrator:
             "is_contract_co": None,
             "is_document_request": None,
             "document_request_type": None,
+            "is_comparison": None,
+            "is_construction_lifecycle": None,
+            "is_schedule_risk": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
             "thought_process": [],
             "agent_path": [],
+            "mode": None,
             "quality_metrics": None,
             "low_confidence": None,
             "ui_action": None,
             "regulation_types_used": [],
+            "reflection_triggered": False,
+            "reflection_retries": 0,
+            "quality_gate_healing": False,
             "errors": []
         }
         
@@ -840,6 +1224,13 @@ class GovGigOrchestrator:
                         if node_docs:
                             accumulated_docs.extend(node_docs)
 
+                    # Quality gate triggered re-synthesis: reset streamed tokens
+                    if event["name"] == "quality_gate":
+                        output = event["data"].get("output") or {}
+                        if output.get("reflection_retries", 0) > 0:
+                            accumulated_response = ""
+                            yield {"type": "clear_stream", "data": {}}
+
                     # Filter for the final state of the whole graph (top-level LangGraph chain)
                     # This ensures we only send ONE 'complete' event at the very end.
                     if event["name"] == "LangGraph" and event["data"].get("output"):
@@ -856,8 +1247,10 @@ class GovGigOrchestrator:
                             "response": response_text,
                             "documents": docs_to_send,
                             "confidence": final_state.get('confidence_score'),
+                            "mode": final_state.get("mode"),
                             "quality_metrics": final_state.get('quality_metrics'),
                             "low_confidence": final_state.get('low_confidence'),
+                            "reflection_triggered": bool(final_state.get('reflection_triggered')),
                             "agent_path": final_state.get("agent_path", [])[_acc_lists["agent_path"]:],
                             "thought_process": final_state.get('thought_process', [])[_acc_lists["thought_process"]:] if final_state.get('cot_enabled') else None,
                             "regulation_types": final_state.get('regulation_types_used', [])[_acc_lists["regulation_types_used"]:],
@@ -936,15 +1329,22 @@ class GovGigOrchestrator:
             "is_contract_co": None,
             "is_document_request": None,
             "document_request_type": None,
+            "is_comparison": None,
+            "is_construction_lifecycle": None,
+            "is_schedule_risk": None,
 
             "retrieved_documents": [],
             "tool_calls": [],
             "thought_process": [],
             "agent_path": [],
+            "mode": None,
             "quality_metrics": None,
             "low_confidence": None,
             "ui_action": None,
             "regulation_types_used": [],
+            "reflection_triggered": False,
+            "reflection_retries": 0,
+            "quality_gate_healing": False,
             "errors": []
         }
 
@@ -959,8 +1359,10 @@ class GovGigOrchestrator:
             "response":        result.get("generated_response"),
             "documents":       documents,
             "confidence":      result.get("confidence_score"),
+            "mode":           result.get("mode"),
             "quality_metrics": result.get("quality_metrics"),
             "low_confidence":  result.get("low_confidence"),
+            "reflection_triggered": bool(result.get("reflection_triggered")),
             "agent_path":      agent_path,
             "thought_process": thought_proc if result.get("cot_enabled") else None,
             "regulation_types": reg_types,

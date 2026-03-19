@@ -38,6 +38,9 @@ class GovGigState(MessagesState):
     is_contract_co: Optional[bool]      # frequency/schedule → contract/CO (from classifier)
     is_document_request: Optional[bool]  # True only for letter-type; checklist/form use synthesis (from classifier)
     document_request_type: Optional[str]  # "letter" | "checklist" | "form" | None
+    is_comparison: Optional[bool]              # "REA vs change order", "type 1 vs type 2" (from classifier)
+    is_construction_lifecycle: Optional[bool]  # commissioning, punchlist, closeout (from classifier)
+    is_schedule_risk: Optional[bool]           # schedule/delay risk analysis (from classifier)
     agent_path: Annotated[List[str], operator.add]  # Track agent execution path
     
     # Chain-of-Thought
@@ -48,10 +51,16 @@ class GovGigState(MessagesState):
     tool_calls: Annotated[List[Dict[str, Any]], operator.add]
     
     # Metadata
+    mode: Optional[str]  # "grounded" | "copilot" | "refusal" | "clarify"
     confidence_score: Optional[float]
     quality_metrics: Optional[Dict[str, Any]]
     low_confidence: Optional[bool]
     regulation_types_used: Annotated[List[str], operator.add]
+
+    # Reflection tracking (explicit flags — never inferred from strings)
+    reflection_triggered: Optional[bool]
+    reflection_retries: Optional[int]
+    quality_gate_healing: Optional[bool]  # True only on the step that triggered healing; False on no-op passes
     
     # Error handling
     errors: Annotated[List[str], operator.add]

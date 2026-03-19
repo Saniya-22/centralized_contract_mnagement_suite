@@ -113,6 +113,7 @@ async def test_agent_run_triggers_reflection_healing(data_retrieval_agent, sampl
     assert len(result["retrieved_documents"]) == 2
     assert result["retrieved_documents"][0]["content"] == "Initial FAR snippet"
     assert result["retrieved_documents"][1]["content"] == "Healed FAR snippet"
+    assert result["reflection_triggered"] is True
     assert any("Self-healing: Added 1 supplemental documents" in step for step in result["agent_path"])
     data_retrieval_agent.reflection_manager.heal_search.assert_awaited_once()
 

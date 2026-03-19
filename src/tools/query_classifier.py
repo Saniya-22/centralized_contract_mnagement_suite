@@ -152,6 +152,7 @@ _REGULATION_KEYWORDS: tuple[str, ...] = (
     "novation", "novation agreement",
     "withhold", "withholding", "withholdings",
     "termination for default", "termination for convenience",
+    "protest", "bid protest", "gao protest", "agency protest",
     "product substitution", "product variance", "substitution", "variance",
     "mobilization", "mobilisation", "post award", "post-award",
     "compensable delay", "concurrent delay", "excusable delay", "delay letter",
@@ -226,6 +227,29 @@ _CONTRACT_CO_TRIGGERS: tuple[str, ...] = (
     "schedule of report", "when are reports due", "how many times",
 )
 
+_COMPARISON_PATTERN = re.compile(
+    r"\bvs\.?\b|versus\b|difference(?:s)?\s+between\b|compar(?:e|ison)\s+(?:of|between)\b"
+    r"|how\s+(?:does?|do)\s+.{2,40}\s+differ\b|distinguish\s+between\b",
+    re.IGNORECASE,
+)
+
+_CONSTRUCTION_LIFECYCLE_TRIGGERS: tuple[str, ...] = (
+    "commissioning", "pre-commissioning", "recommissioning",
+    "punchlist", "punch list", "punch-list",
+    "substantial completion", "beneficial occupancy",
+    "final inspection", "pre-final inspection",
+    "functional testing", "performance testing", "system testing",
+    "acceptance testing", "operational testing",
+    "turnover", "closeout", "close-out", "close out",
+    "warranty period", "warranty inspection",
+    "as-built", "as built", "red-line", "redline",
+    "attic stock", "spare parts turnover",
+    "o&m manual", "operations and maintenance manual",
+    "building automation", "bas commissioning",
+    "fire alarm testing", "elevator testing",
+    "balancing", "tab report", "testing adjusting balancing",
+)
+
 _DOCUMENT_REQUEST_TRIGGERS: tuple[str, ...] = (
     "write me a", "write me an", "draft me a", "draft me an", "draft a ", "write a ",
     "generate a ", "generate me a ", "create a ", "prepare a ",
@@ -280,6 +304,37 @@ def is_contract_co_query(query: str | None) -> bool:
 def is_document_request_query(query: str | None) -> bool:
     """True if the query asks to draft/generate a document (letter only). Checklist/form use synthesis, not letter_drafter."""
     return get_document_request_type(query) == "letter"
+
+
+def is_comparison_query(query: str | None) -> bool:
+    """True if the query asks to compare two concepts (e.g. 'REA vs change order')."""
+    if not query or not query.strip():
+        return False
+    return bool(_COMPARISON_PATTERN.search(query.strip()))
+
+
+def is_construction_lifecycle_query(query: str | None) -> bool:
+    """True if the query is about construction lifecycle phases (commissioning, punchlist, closeout, etc.)."""
+    if not query or not query.strip():
+        return False
+    q = query.strip().lower()
+    return any(t in q for t in _CONSTRUCTION_LIFECYCLE_TRIGGERS)
+
+
+_SCHEDULE_RISK_RE = re.compile(
+    r"\b(schedule|delay|time\s+extension|liquidated\s+damages?)\b", re.IGNORECASE
+)
+_RISK_RE = re.compile(
+    r"\b(risk|entitlement|compensable|excusable|concurrent|impact|mitigation)\b",
+    re.IGNORECASE,
+)
+
+def is_schedule_risk_query(query: str | None) -> bool:
+    """True if the query involves schedule/delay risk analysis."""
+    if not query or not query.strip():
+        return False
+    q = query.strip()
+    return bool(_SCHEDULE_RISK_RE.search(q) and _RISK_RE.search(q))
 
 
 # ── Source normalisation ───────────────────────────────────────────────────────
@@ -345,6 +400,9 @@ class ClassificationResult:
     is_contract_co:      bool            = False  # frequency/schedule → contract/CO
     is_document_request: bool            = False  # True only for letter-type; checklist/form use synthesis
     document_request_type: Optional[str] = None   # "letter" | "checklist" | "form" | None
+    is_comparison:              bool     = False  # "REA vs change order", "type 1 vs type 2"
+    is_construction_lifecycle:  bool     = False  # commissioning, punchlist, closeout, testing
+    is_schedule_risk:           bool     = False  # schedule/delay risk analysis
 
     @property
     def is_clause_lookup(self) -> bool:
@@ -400,6 +458,10 @@ _OUT_OF_SCOPE_SYSTEM_PATTERNS: tuple[str, ...] = (
     "when will the document generator",
     "why is the document generator",
     "access the process guidance",
+    "recommend a lawyer", "recommend an attorney", "recommend a government contracts attorney",
+    "find me a lawyer", "find me an attorney", "find an attorney",
+    "export to word", "export to pdf", "export to excel",
+    "export the response", "save as word", "save as pdf",
 )
 
 
@@ -474,10 +536,13 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
         return ClassificationResult(intent=QueryIntent.OUT_OF_SCOPE, confidence=0.0)
 
     normalised = _normalize_query(query)
-    proc = is_procedural_query(normalised)
-    co   = is_contract_co_query(normalised)
+    proc  = is_procedural_query(normalised)
+    co    = is_contract_co_query(normalised)
     doc_type = get_document_request_type(normalised)
-    doc  = (doc_type == "letter")  # only letter-type goes to letter_drafter; checklist/form use synthesis
+    doc   = (doc_type == "letter")  # only letter-type goes to letter_drafter; checklist/form use synthesis
+    comp  = is_comparison_query(normalised)
+    const = is_construction_lifecycle_query(normalised)
+    sched_risk = is_schedule_risk_query(normalised)
 
     # ── 0. Cache Check ───────────────────────────────────────────────────────────
     if normalised in _ASYNC_CACHE:
@@ -501,6 +566,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_contract_co      = co,
             is_document_request = doc,
             document_request_type = doc_type,
+            is_comparison              = comp,
+            is_construction_lifecycle  = const,
+            is_schedule_risk           = sched_risk,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -523,6 +591,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_contract_co      = co,
             is_document_request = doc,
             document_request_type = doc_type,
+            is_comparison              = comp,
+            is_construction_lifecycle  = const,
+            is_schedule_risk           = sched_risk,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -543,6 +614,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_contract_co      = co,
             is_document_request = doc,
             document_request_type = doc_type,
+            is_comparison              = comp,
+            is_construction_lifecycle  = const,
+            is_schedule_risk           = sched_risk,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -570,6 +644,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_contract_co      = co,
             is_document_request = doc,
             document_request_type = doc_type,
+            is_comparison              = comp,
+            is_construction_lifecycle  = const,
+            is_schedule_risk           = sched_risk,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -584,6 +661,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_contract_co      = co,
             is_document_request = doc,
             document_request_type = doc_type,
+            is_comparison              = comp,
+            is_construction_lifecycle  = const,
+            is_schedule_risk           = sched_risk,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -616,6 +696,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
                 is_contract_co      = co,
                 is_document_request = doc,
                 document_request_type = doc_type,
+                is_comparison              = comp,
+                is_construction_lifecycle  = const,
+                is_schedule_risk           = sched_risk,
             )
             _ASYNC_CACHE[normalised] = res
             return res
@@ -626,6 +709,9 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
         confidence=0.0,
         is_document_request=doc,
         document_request_type=doc_type,
+        is_comparison=comp,
+        is_construction_lifecycle=const,
+        is_schedule_risk=sched_risk,
     )
     _ASYNC_CACHE[normalised] = res
     return res

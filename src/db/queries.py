@@ -336,6 +336,17 @@ class VectorQueries:
             fused = [doc for doc in fused if not VectorQueries._is_meta_chunk(doc)]
             logger.info(f"After meta filter: {len(fused)} chunks")
 
+        # ── Minimal hybrid boosting ───────────────────────────────────────────
+        # For clause/section-number-ish queries, exact lexical matches (FTS leg)
+        # should be favored so we surface the right clause title/anchor chunks.
+        # This makes HYBRID behavior more controllable without replacing RRF.
+        qt = (query_text or "").strip().lower()
+        is_clauseish = bool(
+            re.search(r"\b(52\.\d{3}(?:-\d+)?|252\.\d{3}-\d+)\b", qt)
+            or re.search(r"\b\d{2}\.\d{3}(?:-\d+)?\b", qt)
+            or ("clause" in qt and re.search(r"\d", qt))
+        )
+
         # Alias rrf_score → final_score; optionally boost preferred clause prefixes
         for doc in fused:
             doc["final_score"] = doc["rrf_score"]
@@ -345,6 +356,16 @@ class VectorQueries:
                 sn = VectorQueries._section_number(doc)
                 if sn and any(sn.startswith(prefix) for prefix in preferred_section_prefixes):
                     doc["final_score"] = doc["rrf_score"] * 1.4  # boost operational clauses
+            # Clause-ish: boost docs that appeared in the FTS leg (exact matches).
+            if is_clauseish:
+                methods = doc.get("retrieval_methods") or []
+                if "fts" in methods:
+                    doc["final_score"] = float(doc["final_score"]) * 1.35
+            else:
+                # Semantic-ish: slight preference for dense-only matches when FTS is noisy.
+                methods = doc.get("retrieval_methods") or []
+                if "dense" in methods and "fts" not in methods:
+                    doc["final_score"] = float(doc["final_score"]) * 1.05
 
         fused.sort(key=lambda x: x["final_score"], reverse=True)
         return fused[:k]
@@ -607,6 +628,144 @@ class VectorQueries:
         except Exception as e:
             logger.error(f"Get surrounding chunks failed: {e}")
             raise
+
+    # ─── v2: Anchor + Reference Expansion helpers ─────────────────────────────
+
+    @staticmethod
+    def get_anchor_chunks_for_sections(
+        section_numbers: List[str],
+        namespace: str = settings.REGULATIONS_NAMESPACE,
+        source: Optional[str] = None,
+        limit: int = 25,
+    ) -> List[Dict[str, Any]]:
+        """Fetch anchor chunks (metadata.is_anchor=true) for given section_numbers."""
+        section_numbers = [s for s in (section_numbers or []) if s]
+        if not section_numbers:
+            return []
+
+        optional_projection = VectorQueries._optional_projection_sql()
+        sql = f"""
+        SELECT
+            id, namespace, text, metadata, {optional_projection}
+        FROM {settings.PG_DENSE_TABLE}
+        WHERE (%s IS NULL OR namespace LIKE %s || '%%')
+          AND (%s IS NULL OR metadata->>'source' = %s)
+          AND (metadata @> %s::jsonb)
+          AND (metadata->>'section_number') = ANY(%s)
+        LIMIT %s;
+        """
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(
+                        sql,
+                        (
+                            namespace, namespace,
+                            source, source,
+                            json.dumps({"is_anchor": True}),
+                            section_numbers,
+                            limit,
+                        ),
+                    )
+                    rows = cursor.fetchall()
+                    return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"get_anchor_chunks_for_sections failed: {e}")
+            return []
+
+    @staticmethod
+    def resolve_reference_chunks(
+        query_embedding: List[float],
+        refs: List[Dict[str, Any]],
+        namespace: str = settings.REGULATIONS_NAMESPACE,
+        source: Optional[str] = None,
+        exclude_ids: Optional[List[str]] = None,
+        per_ref_limit: int = 5,
+        total_limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Resolve clause references to candidate chunks, ranked by vector similarity.
+
+        Refs are expected like: [{"type": "FAR", "clause": "6.302-5"}, ...]
+        We match primarily on metadata.section_number == clause and metadata.source == type.
+        """
+        exclude_ids = exclude_ids or []
+        # Normalize refs.
+        normalized: List[Tuple[str, str]] = []
+        for r in refs or []:
+            rt = (r.get("type") or "").strip().upper()
+            clause = (r.get("clause") or "").strip()
+            if not rt or not clause:
+                continue
+            if rt == "EM 385":
+                rt = "EM385"
+            normalized.append((rt, clause))
+
+        if not normalized:
+            return []
+
+        # De-dup while preserving order.
+        seen = set()
+        unique_refs: List[Tuple[str, str]] = []
+        for t, c in normalized:
+            key = (t, c)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_refs.append(key)
+
+        optional_projection = VectorQueries._optional_projection_sql()
+        # Use section_number match first; fall back to text ILIKE for robustness.
+        sql = f"""
+        SELECT
+            id, namespace, text, metadata, {optional_projection},
+            (1 - (embedding <=> %s::vector)) AS similarity
+        FROM {settings.PG_DENSE_TABLE}
+        WHERE (%s IS NULL OR namespace LIKE %s || '%%')
+          AND (%s IS NULL OR metadata->>'source' = %s)
+          AND NOT (id = ANY(%s))
+          AND (
+                (metadata->>'source' = %s AND (metadata->>'section_number') = %s)
+             OR (metadata->>'source' = %s AND text ILIKE %s)
+          )
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s;
+        """
+
+        all_rows: List[Dict[str, Any]] = []
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    for rt, clause in unique_refs:
+                        pattern = f"%{clause}%"
+                        cursor.execute(
+                            sql,
+                            (
+                                query_embedding,
+                                namespace, namespace,
+                                source, source,
+                                exclude_ids,
+                                rt, clause,
+                                rt, pattern,
+                                query_embedding,
+                                per_ref_limit,
+                            ),
+                        )
+                        all_rows.extend([dict(r) for r in cursor.fetchall()])
+        except Exception as e:
+            logger.error(f"resolve_reference_chunks failed: {e}")
+            return []
+
+        # De-dup by id and take top by similarity.
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for r in all_rows:
+            rid = r.get("id")
+            if not rid:
+                continue
+            if rid not in by_id:
+                by_id[rid] = r
+        ranked = list(by_id.values())
+        ranked.sort(key=lambda x: float(x.get("similarity") or 0.0), reverse=True)
+        return ranked[:total_limit]
 
     # ─── API Response Caching ────────────────────────────────────────────────
 
@@ -1039,6 +1198,7 @@ class VectorQueries:
             groundedness_score  FLOAT,
             evidence_score      FLOAT,
             low_confidence      BOOLEAN,
+            mode                TEXT,
             doc_count           INT,
             reflection_triggered BOOLEAN DEFAULT FALSE,
             was_cached          BOOLEAN DEFAULT FALSE,
@@ -1056,6 +1216,8 @@ class VectorQueries:
             with get_db_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(sql)
+                    # Backward-compatible migration for existing tables
+                    cursor.execute("ALTER TABLE query_analytics ADD COLUMN IF NOT EXISTS mode TEXT;")
                     logger.info("Query analytics table verified")
         except Exception as e:
             logger.error(f"Failed to init analytics table: {e}")
@@ -1071,24 +1233,19 @@ class VectorQueries:
             query_text, query_hash, user_id, thread_id,
             intent, regulation_types, confidence,
             quality_score, citation_coverage, groundedness_score, evidence_score,
-            low_confidence, doc_count, reflection_triggered,
+            low_confidence, mode, doc_count, reflection_triggered,
             was_cached, latency_ms, error_count, errors, source
         ) VALUES (
             %s, %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s,
-            %s, %s, %s,
+            %s, %s, %s, %s,
             %s, %s, %s, %s, %s
         );
         """
         try:
             qm = data.get("quality_metrics") or {}
-            # Detect if reflection was triggered from agent_path
-            agent_path = data.get("agent_path", [])
-            reflection_triggered = any(
-                "expand" in step.lower() or "re-search" in step.lower() or "healing" in step.lower()
-                for step in agent_path
-            ) if agent_path else False
+            reflection_triggered = bool(data.get("reflection_triggered", False))
 
             errors_list = data.get("errors", [])
 
@@ -1107,6 +1264,7 @@ class VectorQueries:
                         qm.get("groundedness_score"),
                         qm.get("evidence_score"),
                         data.get("low_confidence"),
+                        data.get("mode") or qm.get("mode"),
                         data.get("doc_count", 0),
                         reflection_triggered,
                         data.get("was_cached", False),

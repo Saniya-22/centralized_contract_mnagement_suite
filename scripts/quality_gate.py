@@ -21,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.agents.orchestrator import GovGigOrchestrator
 
-FALLBACK_PHRASE = "I don’t have sufficient high-confidence evidence"
+# Keep this in sync with GovGigOrchestrator._safe_fallback_message()
+# which triggers when no retrieved docs are available.
+FALLBACK_PHRASE = "The retrieved regulatory excerpts do not directly address this specific question"
 CITATION_RE = re.compile(r"\b(FAR|DFARS|EM\s*385)\b\s*\d", re.IGNORECASE)
 
 

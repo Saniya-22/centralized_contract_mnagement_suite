@@ -15,12 +15,17 @@ EMBEDDING_ENDPOINT: str = os.getenv("EMBEDDING_ENDPOINT", "https://api.openai.co
 
 # Unified chunk size regime (strategy doc Part 2.6)
 TARGET_CHUNK_TOKENS: int = int(os.getenv("TARGET_CHUNK_TOKENS", "450"))
-MAX_CHUNK_TOKENS: int = int(os.getenv("MAX_CHUNK_TOKENS", "650"))
+MAX_CHUNK_TOKENS: int = int(os.getenv("MAX_CHUNK_TOKENS", "900"))
 MIN_CHUNK_TOKENS: int = int(os.getenv("MIN_CHUNK_TOKENS", "100"))
 MIN_ANCHOR_TOKENS: int = int(os.getenv("MIN_ANCHOR_TOKENS", "50"))
 CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "0"))
 CLAUSE_SPLIT_TRIGGER_TOKENS: int = int(os.getenv("CLAUSE_SPLIT_TRIGGER_TOKENS", "400"))
 KEEP_STANDALONE_ANCHOR_CHUNKS: bool = os.getenv("KEEP_STANDALONE_ANCHOR_CHUNKS", "true").lower() == "true"
+
+# Chunking Strategy v2 gates (meaning-first, size-second)
+KEEP_INTACT_TOKEN_LIMIT: int = int(os.getenv("KEEP_INTACT_TOKEN_LIMIT", "800"))
+SUBCLAUSE_SPLIT_TOKEN_LIMIT: int = int(os.getenv("SUBCLAUSE_SPLIT_TOKEN_LIMIT", "900"))
+PARAGRAPH_SPLIT_TOKEN_LIMIT: int = int(os.getenv("PARAGRAPH_SPLIT_TOKEN_LIMIT", "1200"))
 
 # Backwards compatibility for code still using old names
 CHUNK_SIZE: int = MAX_CHUNK_TOKENS
