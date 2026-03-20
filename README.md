@@ -58,7 +58,7 @@ graph TD
         DataRetrieval --> |Context| Drafter[Letter Drafter]
         DataRetrieval --> |Context| Synthesizer[Synthesizer]
         
-        Drafter --> Guard[Sovereign Guard (Optional)]
+        Drafter --> Guard["Sovereign Guard (Optional)"]
         Synthesizer --> Guard
     end
     
