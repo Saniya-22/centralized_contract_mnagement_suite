@@ -58,7 +58,7 @@ graph TD
         DataRetrieval --> |Context| Drafter[Letter Drafter]
         DataRetrieval --> |Context| Synthesizer[Synthesizer]
         
-        Drafter --> Guard[Sovereign Guard]
+        Drafter --> Guard[Sovereign Guard (Optional)]
         Synthesizer --> Guard
     end
     
@@ -84,7 +84,7 @@ graph TD
 - **Query Router:** Classifies user intent to determine the optimal processing path (clause lookup, search, or document drafting).
 - **Data Retrieval Agent:** Performs hybrid search (dense embeddings + full-text search) from RDS, followed by optional LLM reranking and self-healing reflection (query expansion) if initial results are insufficient.
 - **Letter Drafter & Synthesizer:** Generate grounded responses or formal drafts based on retrieved regulatory context.
-- **Sovereign Guard:** A safety and compliance layer that reviews generated content before it reaches the user.
+- **Sovereign Guard (Optional):** A safety and compliance layer that can be enabled to review generated content before it reaches the user.
 - **Data Layer:** A unified PostgreSQL instance utilizing `pgvector` for semantic search, alongside standard relational tables for chat history, caching, and analytics.
 
 See **docs/GOVGIG_ARCHITECTURE.md** for detailed environment references and sequence diagrams.
@@ -162,6 +162,7 @@ Edit `.env`: set `OPENAI_API_KEY`, `PG_PASSWORD`, `JWT_SECRET_KEY`. Set `PG_HOST
 | `PG_SSLMODE` | No | `disable` (local) or `require` (e.g. RDS). |
 | `RETRIEVAL_TOP_K` | No | Primary retrieval size (default 12). |
 | `RERANKER_ENABLED` | No | Use LLM reranker after hybrid search (default true). |
+| `SOVEREIGN_GUARD_ENABLED` | No | Enable Sovereign Guard safety layer (default false). |
 | `CORS_ORIGINS` | No | JSON list of allowed origins (default localhost:3000, 3001). |
 
 Full list: **src/config.py** and **.env.example**.

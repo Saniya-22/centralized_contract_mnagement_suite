@@ -125,9 +125,9 @@ The GovGig AI backend (current scope) consists of:
 
 - **Data layer:** PostgreSQL with pgvector. Tables store embeddings, API cache, users, auth audit logs, chat history, feedback, analytics, and LangGraph checkpoints.
 
-- **External (outbound):** OpenAI (required) for embeddings, response synthesis, letter drafting, reranking, query classifier fallback, and reflection. Optional: Sovereign AI Guard (HTTP POST safety check for generated responses) and LangSmith (tracing and observability for LangGraph).
+- **External (outbound):** OpenAI (required) for embeddings, response synthesis, letter drafting, reranking, query classifier fallback, and reflection. Optional: Sovereign AI Guard (optional safety check for generated responses) and LangSmith (tracing and observability for LangGraph).
 
-**Data flow (high level):** Client → FastAPI (JWT, rate limit, route) → Query Router. Router outcomes: *clause lookup* (served from PostgreSQL); *regulation search* (hybrid vector + FTS in pgvector, optional OpenAI rerank, optional reflection, then Letter Drafter or Synthesizer via OpenAI); *out-of-scope* (direct response). Optional post-step: Sovereign Guard. All conversation history, analytics, feedback, and checkpoints are persisted in PostgreSQL. No explicit PII is required to be sent to OpenAI; user identity remains server-side (JWT and DB). Queries and retrieved regulatory chunks are sent for generation; thread identifiers can be used for anonymization if required by policy.
+**Data flow (high level):** Client → FastAPI (JWT, rate limit, route) → Query Router. Router outcomes: *clause lookup* (served from PostgreSQL); *regulation search* (hybrid vector + FTS in pgvector, optional OpenAI rerank, optional reflection, then Letter Drafter or Synthesizer via OpenAI); *out-of-scope* (direct response). Optional post-step: Sovereign Guard (disabled by default). All conversation history, analytics, feedback, and checkpoints are persisted in PostgreSQL. No explicit PII is required to be sent to OpenAI; user identity remains server-side (JWT and DB). Queries and retrieved regulatory chunks are sent for generation; thread identifiers can be used for anonymization if required by policy.
 
 ---
 
