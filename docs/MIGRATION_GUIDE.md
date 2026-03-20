@@ -28,7 +28,7 @@ This guide walks through migrating from the existing Node.js/Vercel AI SDK backe
 #### 1. Install Python Backend
 
 ```bash
-cd backend_python
+# From project root
 ./run.sh
 ```
 
@@ -37,7 +37,7 @@ Or manually:
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r src/requirements.txt
 cp .env.example .env
 # Edit .env with your values
 python -m uvicorn src.api.main:app --reload
@@ -184,12 +184,12 @@ ws.onmessage = (event) => {
 | Orchestrator (Vercel AI SDK) | LangGraph StateGraph | ✅ Done |
 | Data Retrieval Agent | DataRetrievalAgent | ✅ Done |
 | Vector Search | VectorSearchTool | ✅ Done |
-| Document Analysis | DocumentAnalysisAgent | ⏳ TODO |
-| Document Generation | DocumentGenerationAgent | ⏳ TODO |
-| Help Agent | HelpAgent | ⏳ TODO |
+| Document Analysis | DocumentAnalysisAgent | ✅ Done |
+| Document Generation | DocumentGenerationAgent | ✅ Done |
+| Help Agent | HelpAgent | ✅ Done |
 | Authentication | JWT + FastAPI (HTTPBearer) | ✅ Done |
 | Chat History | PostgreSQL (LangGraph Saver) | ✅ Done |
-| Feedback System | API Endpoints | ⏳ TODO |
+| Feedback System | API Endpoints | ✅ Done |
 
 ### Authentication Implementation
 
@@ -430,8 +430,8 @@ locust -f tests/locustfile.py --host http://localhost:8000
 
 ## Questions?
 
-For migration support:
-1. Check documentation in `backend_python/README.md`
-2. Review test files in `backend_python/tests/`
+For support:
+1. Check documentation in `README.md`
+2. Review test files in `tests/`
 3. Check logs: `docker-compose logs -f backend`
-4. Test locally: `./test_setup.sh`
+4. Test locally: `./run.sh`
