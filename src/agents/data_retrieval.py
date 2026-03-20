@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 
 # FAR clause prefixes to boost for mobilization / "clauses to review" queries
 MOBILIZATION_CLAUSE_PREFIXES = [
-    "52.211",   # commencement / delivery
-    "52.232",   # payments
-    "52.236",   # construction
-    "52.242",   # contract administration
-    "52.243",   # changes
-    "52.249",   # termination / default
+    "52.211",  # commencement / delivery
+    "52.232",  # payments
+    "52.236",  # construction
+    "52.242",  # contract administration
+    "52.243",  # changes
+    "52.249",  # termination / default
 ]
 
 
@@ -102,12 +102,12 @@ class DataRetrievalAgent(BaseAgent):
           3. Self-Healing (Only if confidence < threshold)
         """
         # ── Local delta accumulators ──────────────────────────────────────────
-        new_docs:       List[Dict[str, Any]] = []
+        new_docs: List[Dict[str, Any]] = []
         new_tool_calls: List[Dict[str, Any]] = []
-        new_reg_types:  List[str]            = []
-        new_agent_path: List[str]            = []
-        new_thoughts:   List[str]            = []
-        new_errors:     List[str]            = []
+        new_reg_types: List[str] = []
+        new_agent_path: List[str] = []
+        new_thoughts: List[str] = []
+        new_errors: List[str] = []
         reflection_triggered: bool = False
 
         def _log(msg: str):
@@ -128,14 +128,16 @@ class DataRetrievalAgent(BaseAgent):
 
             # ── 1. Initial Retrieval ──────────────────────────────────────────
             # Read classifier output written by the router node
-            query_intent      = state.get("query_intent")
-            detected_clause   = state.get("detected_clause_ref")
+            query_intent = state.get("query_intent")
+            detected_clause = state.get("detected_clause_ref")
             detected_reg_type = state.get("detected_reg_type")
 
             if query_intent == QueryIntent.CLAUSE_LOOKUP and detected_clause:
                 # ── Path A: Direct clause lookup (0 LLM calls) ───────────────
                 _log(f"Intent=clause_lookup: direct lookup for '{detected_clause}'")
-                _think(f"Clause reference detected: '{detected_clause}'. Using direct lookup.")
+                _think(
+                    f"Clause reference detected: '{detected_clause}'. Using direct lookup."
+                )
                 new_docs, new_tool_calls, new_reg_types = self._do_clause_lookup(
                     detected_clause, new_docs, new_tool_calls, new_reg_types, _log
                 )
@@ -143,7 +145,9 @@ class DataRetrievalAgent(BaseAgent):
             elif query_intent == QueryIntent.REGULATION_SEARCH:
                 # ── Path B: Direct regulation search (0 LLM calls) ───────────
                 _log("Intent=regulation_search: calling search_regulations directly")
-                _think(f"Regulatory query detected. Searching with type filter: {detected_reg_type}")
+                _think(
+                    f"Regulatory query detected. Searching with type filter: {detected_reg_type}"
+                )
                 new_docs, new_tool_calls, new_reg_types = self._do_regulation_search(
                     query=state["query"],
                     regulation_type=detected_reg_type,
@@ -166,18 +170,24 @@ class DataRetrievalAgent(BaseAgent):
             # Apply reflection to ALL paths — including clause lookups that
             # fell back to hybrid search and returned mismatched results.
             critique = self.reflection_manager.check_quality(state["query"], new_docs)
-            
+
             if not critique["passed"]:
                 should_heal = self._should_trigger_self_healing(critique, len(new_docs))
                 if should_heal:
-                    _log(f"Reflection: Low confidence ({critique['score']:.2f}). Reason: {critique['reason']}. Triggering self-healing.")
-                    _think(f"Retrieval quality critique failed: {critique['reason']}. Seeking broader context.")
-                    
+                    _log(
+                        f"Reflection: Low confidence ({critique['score']:.2f}). Reason: {critique['reason']}. Triggering self-healing."
+                    )
+                    _think(
+                        f"Retrieval quality critique failed: {critique['reason']}. Seeking broader context."
+                    )
+
                     # If mismatch detected, clear original bad results IMMEDIATELY
                     # to prevent them leaking into the final response/evidence.
                     is_mismatch = "mismatch" in critique.get("reason", "").lower()
                     if is_mismatch:
-                        _log("Regulation mismatch detected. Clearing original documents.")
+                        _log(
+                            "Regulation mismatch detected. Clearing original documents."
+                        )
                         new_docs = []
                         new_reg_types = []
 
@@ -190,18 +200,20 @@ class DataRetrievalAgent(BaseAgent):
                             search_args["regulation_type"] = reg_filter
                         return await asyncio.to_thread(
                             self.vector_search_tool.search_regulations.invoke,
-                            search_args
+                            search_args,
                         )
-                    
+
                     healed_docs = await self.reflection_manager.heal_search(
                         query=state["query"],
                         fail_reason=critique["reason"],
-                        search_func=_search_wrapper
+                        search_func=_search_wrapper,
                     )
                     reflection_triggered = True
-                    
+
                     if healed_docs:
-                        _log(f"Self-healing: Added {len(healed_docs)} supplemental documents")
+                        _log(
+                            f"Self-healing: Added {len(healed_docs)} supplemental documents"
+                        )
                         new_docs.extend(healed_docs)
                         for d in healed_docs:
                             rt = d.get("regulation_type")
@@ -213,7 +225,9 @@ class DataRetrievalAgent(BaseAgent):
                         "skipping self-healing to preserve latency."
                     )
             else:
-                _log(f"Reflection: High confidence ({critique['score']:.2f}). Fast-path synthesis.")
+                _log(
+                    f"Reflection: High confidence ({critique['score']:.2f}). Fast-path synthesis."
+                )
 
             _log(f"Completed retrieval: {len(new_docs)} total documents")
 
@@ -225,11 +239,11 @@ class DataRetrievalAgent(BaseAgent):
 
         # ── Return ONLY the delta ─────────────────────────────────────────────
         delta: Dict[str, Any] = {
-            "retrieved_documents":   new_docs,
-            "tool_calls":            new_tool_calls,
+            "retrieved_documents": new_docs,
+            "tool_calls": new_tool_calls,
             "regulation_types_used": new_reg_types,
-            "agent_path":            new_agent_path,
-            "reflection_triggered":  reflection_triggered,
+            "agent_path": new_agent_path,
+            "reflection_triggered": reflection_triggered,
         }
         if new_thoughts:
             delta["thought_process"] = new_thoughts
@@ -239,7 +253,9 @@ class DataRetrievalAgent(BaseAgent):
 
     # ── Private dispatch helpers (Sync for tool compatibility) ────────────────
 
-    def _should_trigger_self_healing(self, critique: Dict[str, Any], doc_count: int) -> bool:
+    def _should_trigger_self_healing(
+        self, critique: Dict[str, Any], doc_count: int
+    ) -> bool:
         """Apply a latency-aware policy for ReflectionRAG retries.
 
         Always heal for hard failures (no docs / regulation mismatch).
@@ -261,13 +277,17 @@ class DataRetrievalAgent(BaseAgent):
         if 0.0 < raw_score <= 0.05 and score < settings.REFLECTION_THRESHOLD:
             return True
 
-        heal_cutoff = max(0.0, settings.REFLECTION_THRESHOLD - settings.REFLECTION_HEALING_MARGIN)
+        heal_cutoff = max(
+            0.0, settings.REFLECTION_THRESHOLD - settings.REFLECTION_HEALING_MARGIN
+        )
         return score < heal_cutoff
 
     def _do_clause_lookup(
         self,
         clause_reference: str,
-        new_docs: list, new_tool_calls: list, new_reg_types: list,
+        new_docs: list,
+        new_tool_calls: list,
+        new_reg_types: list,
         _log,
     ):
         """Direct clause lookup — no LLM involved."""
@@ -278,17 +298,21 @@ class DataRetrievalAgent(BaseAgent):
             clause = result["clause"]
             doc = {
                 "rank": 1,
-                "content":         result.get("context", clause.get("text", "")),
-                "source":          clause.get("source", ""),
+                "content": result.get("context", clause.get("text", "")),
+                "source": clause.get("source", ""),
                 "regulation_type": clause.get("source", "Unknown"),
-                "section":         clause.get("part", "N/A"),
-                "chunk_index":     None,
-                "score":           float(result.get("confidence") or 10.0 if result.get("found") else 0.5),
-                "retrieval_methods": ["clause_lookup" if result.get("found") else "clause_fallback"],
-                "metadata":        clause,
+                "section": clause.get("part", "N/A"),
+                "chunk_index": None,
+                "score": float(
+                    result.get("confidence") or 10.0 if result.get("found") else 0.5
+                ),
+                "retrieval_methods": [
+                    "clause_lookup" if result.get("found") else "clause_fallback"
+                ],
+                "metadata": clause,
             }
             new_docs.append(doc)
-            
+
             # If fuzzy results exist, add them too (helps reflection check diversity)
             if result.get("fuzzy_results"):
                 for fuzzy in result["fuzzy_results"]:
@@ -298,12 +322,14 @@ class DataRetrievalAgent(BaseAgent):
             if clause.get("source") and clause["source"] not in new_reg_types:
                 new_reg_types.append(clause["source"])
 
-        new_tool_calls.append({
-            "agent": self.name,
-            "tool":  "get_clause_by_reference",
-            "args":  {"clause_reference": clause_reference},
-            "found": result.get("found", False),
-        })
+        new_tool_calls.append(
+            {
+                "agent": self.name,
+                "tool": "get_clause_by_reference",
+                "args": {"clause_reference": clause_reference},
+                "found": result.get("found", False),
+            }
+        )
         _log(f"Clause lookup: found={result.get('found')}")
         return new_docs, new_tool_calls, new_reg_types
 
@@ -311,8 +337,11 @@ class DataRetrievalAgent(BaseAgent):
         self,
         query: str,
         regulation_type: Optional[str],
-        new_docs: list, new_tool_calls: list, new_reg_types: list,
-        _log, _think,
+        new_docs: list,
+        new_tool_calls: list,
+        new_reg_types: list,
+        _log,
+        _think,
     ):
         """Direct hybrid search — no LLM tool-selector involved."""
         tool_args = {
@@ -330,12 +359,14 @@ class DataRetrievalAgent(BaseAgent):
         results = self.vector_search_tool.search_regulations.invoke(tool_args)
 
         new_docs.extend(results)
-        new_tool_calls.append({
-            "agent":        self.name,
-            "tool":         "search_regulations",
-            "args":         tool_args,
-            "result_count": len(results),
-        })
+        new_tool_calls.append(
+            {
+                "agent": self.name,
+                "tool": "search_regulations",
+                "args": tool_args,
+                "result_count": len(results),
+            }
+        )
         for result in results:
             rt = result.get("regulation_type")
             if rt and rt not in new_reg_types:
@@ -348,23 +379,33 @@ class DataRetrievalAgent(BaseAgent):
     def _do_llm_dispatch(
         self,
         state: GovGigState,
-        new_docs: list, new_tool_calls: list, new_reg_types: list,
-        _log, _think,
+        new_docs: list,
+        new_tool_calls: list,
+        new_reg_types: list,
+        _log,
+        _think,
     ):
         """Fallback: one LLM call to select the right tool for ambiguous queries."""
         messages = self._create_messages(state)
-        response  = self.llm_with_tools.invoke(messages)
+        response = self.llm_with_tools.invoke(messages)
 
         if not response.tool_calls:
             _log("No tool calls made — agent provided direct response")
             if response.content:
                 # Store content as a pseudo-document so synthesizer sees it
-                new_docs.append({
-                    "rank": 1, "content": response.content,
-                    "source": "agent", "regulation_type": "N/A",
-                    "section": "N/A", "chunk_index": None, "score": 5.0,
-                    "retrieval_methods": ["direct_response"], "metadata": {},
-                })
+                new_docs.append(
+                    {
+                        "rank": 1,
+                        "content": response.content,
+                        "source": "agent",
+                        "regulation_type": "N/A",
+                        "section": "N/A",
+                        "chunk_index": None,
+                        "score": 5.0,
+                        "retrieval_methods": ["direct_response"],
+                        "metadata": {},
+                    }
+                )
             return new_docs, new_tool_calls, new_reg_types
 
         _log(f"Processing {len(response.tool_calls)} LLM tool calls")

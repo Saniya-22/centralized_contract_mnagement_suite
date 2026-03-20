@@ -54,12 +54,26 @@ def rerank(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     numbered_previews = []
     for i, chunk in enumerate(chunks):
         meta = chunk.get("metadata") or {}
-        src = meta.get("source") or chunk.get("source_file") or chunk.get("source") or ""
-        section_number = meta.get("section_number") or meta.get("part") or meta.get("section") or ""
+        src = (
+            meta.get("source") or chunk.get("source_file") or chunk.get("source") or ""
+        )
+        section_number = (
+            meta.get("section_number") or meta.get("part") or meta.get("section") or ""
+        )
         section_title = meta.get("section_title") or meta.get("title") or ""
         text = chunk.get("text") or chunk.get("content") or ""
         text_preview = text[:400].replace("\n", " ")
-        header = " | ".join([p for p in [str(src).strip(), str(section_number).strip(), str(section_title).strip()] if p])
+        header = " | ".join(
+            [
+                p
+                for p in [
+                    str(src).strip(),
+                    str(section_number).strip(),
+                    str(section_title).strip(),
+                ]
+                if p
+            ]
+        )
         if header:
             numbered_previews.append(f"[{i}] {header}\n{text_preview}")
         else:
@@ -78,9 +92,9 @@ def rerank(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "content": (
                         "You are a relevance scoring system. "
                         "Given a query and numbered document excerpts, "
-                        "return ONLY a JSON object with a key \"scores\" "
+                        'return ONLY a JSON object with a key "scores" '
                         "whose value is an array of objects with "
-                        "\"index\" (integer) and \"score\" (0-10 float, "
+                        '"index" (integer) and "score" (0-10 float, '
                         "where 10 = highly relevant, 0 = irrelevant). "
                         "No explanation, just the JSON."
                     ),
@@ -118,7 +132,9 @@ def rerank(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ]
         reranked.sort(key=lambda x: x["rerank_score"], reverse=True)
 
-        logger.info(f"[Reranker] Reranked {len(chunks)} chunks via {settings.RERANKER_MODEL}")
+        logger.info(
+            f"[Reranker] Reranked {len(chunks)} chunks via {settings.RERANKER_MODEL}"
+        )
         for i, c in enumerate(reranked[:5]):
             preview = (c.get("text") or c.get("content") or "")[:80].replace("\n", " ")
             logger.debug(
@@ -128,7 +144,9 @@ def rerank(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return reranked
 
     except Exception as exc:
-        logger.warning(f"[Reranker] GPT reranking failed ({exc}), falling back to rrf_score sort")
+        logger.warning(
+            f"[Reranker] GPT reranking failed ({exc}), falling back to rrf_score sort"
+        )
         return sorted(
             chunks,
             key=lambda x: x.get("rrf_score") or x.get("similarity") or 0.0,

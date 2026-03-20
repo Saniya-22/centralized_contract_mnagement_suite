@@ -13,29 +13,30 @@ logger = logging.getLogger(__name__)
 # Security scheme
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> Dict[str, Any]:
     """
     Validate JWT token and return the payload.
-    
+
     Args:
         credentials: The Authorization header credentials
-        
+
     Returns:
         Dict: Parsed JWT payload
-        
+
     Raises:
         HTTPException: If token is invalid or expired
     """
     token = credentials.credentials
-    
+
     try:
         # Decode and verify token
         payload = jwt.decode(
-            token, 
-            settings.JWT_SECRET_KEY, 
-            algorithms=[settings.JWT_ALGORITHM]
+            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
         )
-        
+
         # Check if user_id or sub exists in payload
         user_id = payload.get("sub") or payload.get("id") or payload.get("user_id")
         if user_id is None:
@@ -44,9 +45,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                 detail="Invalid token payload: missing user identifier",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-            
+
         return payload
-        
+
     except JWTError as e:
         logger.warning(f"JWT validation failed: {e}")
         raise HTTPException(

@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 
-import os
 import json
 import asyncio
 import aiohttp
-import asyncpg
 import re
 import hashlib
 import logging
-import warnings
 import tiktoken
 from pathlib import Path
 from datetime import datetime
@@ -21,13 +18,44 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 
 # SQLAlchemy Core & Async IO
-from sqlalchemy import MetaData, Table, Column, String, select, bindparam, cast, text
+from sqlalchemy import MetaData, Table, Column, String, select, bindparam
 from sqlalchemy.types import UserDefinedType
 from sqlalchemy.dialects.postgresql import insert as pg_insert, JSONB
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncConnection, AsyncEngine
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from parsing.classifier import classify_line
+from config import (
+    NAMESPACE,
+    EMBEDDING_MODEL,
+    EMBEDDING_ENDPOINT,
+    MAX_CHUNK_TOKENS,
+    MIN_CHUNK_TOKENS,
+    TARGET_CHUNK_TOKENS,
+    CHUNK_OVERLAP,
+    CLAUSE_SPLIT_TRIGGER_TOKENS,
+    KEEP_STANDALONE_ANCHOR_CHUNKS,
+    KEEP_INTACT_TOKEN_LIMIT,
+    SUBCLAUSE_SPLIT_TOKEN_LIMIT,
+    PARAGRAPH_SPLIT_TOKEN_LIMIT,
+    MAX_CONCURRENT_PDFS,
+    EMBED_RATE_DELAY,
+    BATCH_SIZE,
+    INCLUDE_FILES_RAW,
+    OPENAI_API_KEY,
+    DATABASE_URL,
+    PG_DENSE_TABLE,
+    PG_SPARSE_TABLE,
+    PG_SSLMODE,
+    USE_STEMMING,
+    USE_STOPWORDS,
+    SPECIFICATIONS_DIR,
+)
+
 
 class PGVector(UserDefinedType):
     """Custom type for PostgreSQL pgvector extension."""
+
     def get_col_spec(self, **kw):
         return "vector"
 
@@ -39,6 +67,7 @@ class PGVector(UserDefinedType):
                 # Convert list [1, 2, 3] to Postgres vector string "[1, 2, 3]"
                 return "[" + ",".join(map(str, value)) + "]"
             return value
+
         return process
 
     def result_processor(self, dialect, coltype):
@@ -49,11 +78,9 @@ class PGVector(UserDefinedType):
                 # Convert "[1, 2, 3]" back to list
                 return [float(x) for x in value.strip("[]").split(",")]
             return value
+
         return process
 
-warnings.filterwarnings('ignore')
-
-from config import *
 
 # ---------------------------------------------------------
 # Text normalization (PDF extraction hardening)
@@ -61,13 +88,13 @@ from config import *
 
 _LINESTART_MARKER_RE = re.compile(
     r"^\s*(?:"
-    r"\([a-z]\)\s|"            # (a)
-    r"\(\d+\)\s|"              # (1)
-    r"\([ivx]+\)\s|"           # (i)
+    r"\([a-z]\)\s|"  # (a)
+    r"\(\d+\)\s|"  # (1)
+    r"\([ivx]+\)\s|"  # (i)
     r"\d{2,3}\.\d{3}(?:-\d+)?\s|"  # FAR/DFARS 52.212-4
-    r"\d+-\d+\.\s|"            # EM385 1-1.
-    r"[A-Z]-\d+\s|"            # Appendix A-1
-    r"Rule\s+\d+\s"            # Appendix Rule 1
+    r"\d+-\d+\.\s|"  # EM385 1-1.
+    r"[A-Z]-\d+\s|"  # Appendix A-1
+    r"Rule\s+\d+\s"  # Appendix Rule 1
     r")",
     re.IGNORECASE,
 )
@@ -87,7 +114,9 @@ def normalize_legal_text(text: str, source: str) -> str:
 
     # Normalize common unicode whitespace/dashes that break regexes.
     t = text.replace("\u00a0", " ")  # NBSP
-    t = t.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")  # – — minus
+    t = (
+        t.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+    )  # – — minus
 
     # Normalize newlines.
     t = t.replace("\r\n", "\n").replace("\r", "\n")
@@ -146,7 +175,12 @@ def _norm_for_dedupe(text: str) -> str:
     """Normalization for exact-dedupe hashing (whitespace-insensitive)."""
     if not text:
         return ""
-    t = text.replace("\u00a0", " ").replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")
+    t = (
+        text.replace("\u00a0", " ")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace("\u2212", "-")
+    )
     t = t.replace("\r\n", "\n").replace("\r", "\n")
     # Make whitespace differences irrelevant while preserving visible characters.
     t = re.sub(r"[ \t]+", " ", t)
@@ -178,13 +212,18 @@ def dedupe_chunks_exact(
         if scope == "document":
             key = (None, None)
         else:
-            key = (str(c.get("section_number") or ""), str(c.get("section_title") or ""))
+            key = (
+                str(c.get("section_number") or ""),
+                str(c.get("section_title") or ""),
+            )
         bucket = seen_by_key.setdefault(key, set())
         if h in bucket:
             continue
         bucket.add(h)
         out.append(c)
     return out
+
+
 # ---------------------------------------------------------
 # SQL Table Definitions (SQLAlchemy Core)
 # ---------------------------------------------------------
@@ -193,7 +232,8 @@ metadata_obj = MetaData()
 
 # Define tables using SQLAlchemy Core for query building
 dense_table = Table(
-    PG_DENSE_TABLE, metadata_obj,
+    PG_DENSE_TABLE,
+    metadata_obj,
     Column("id", String, primary_key=True),
     Column("namespace", String),
     Column("text", String),
@@ -202,7 +242,8 @@ dense_table = Table(
 )
 
 sparse_table = Table(
-    PG_SPARSE_TABLE, metadata_obj,
+    PG_SPARSE_TABLE,
+    metadata_obj,
     Column("id", String, primary_key=True),
     Column("namespace", String),
     Column("text", String),
@@ -215,51 +256,61 @@ sparse_table = Table(
 # ---------------------------------------------------------
 
 # Build Dense Insert Statement (Idempotent Upsert)
-stmt_insert_dense = pg_insert(dense_table).values({
-    "id": bindparam("id"),
-    "namespace": bindparam("namespace"),
-    "text": bindparam("text"),
-    "metadata": bindparam("metadata"),
-    "embedding": bindparam("embedding")
-})
+stmt_insert_dense = pg_insert(dense_table).values(
+    {
+        "id": bindparam("id"),
+        "namespace": bindparam("namespace"),
+        "text": bindparam("text"),
+        "metadata": bindparam("metadata"),
+        "embedding": bindparam("embedding"),
+    }
+)
 stmt_upsert_dense = stmt_insert_dense.on_conflict_do_update(
     index_elements=["id"],
     set_={
         "text": stmt_insert_dense.excluded.text,
         "metadata": stmt_insert_dense.excluded.metadata,
-        "embedding": stmt_insert_dense.excluded.embedding
-    }
+        "embedding": stmt_insert_dense.excluded.embedding,
+    },
 )
 
 # Build Sparse Insert Statement (Idempotent Upsert)
-stmt_insert_sparse = pg_insert(sparse_table).values({
-    "id": bindparam("id"),
-    "namespace": bindparam("namespace"),
-    "text": bindparam("text"),
-    "metadata": bindparam("metadata"),
-    "embedding": bindparam("embedding")
-})
+stmt_insert_sparse = pg_insert(sparse_table).values(
+    {
+        "id": bindparam("id"),
+        "namespace": bindparam("namespace"),
+        "text": bindparam("text"),
+        "metadata": bindparam("metadata"),
+        "embedding": bindparam("embedding"),
+    }
+)
 stmt_upsert_sparse = stmt_insert_sparse.on_conflict_do_update(
     index_elements=["id"],
     set_={
         "text": stmt_insert_sparse.excluded.text,
         "metadata": stmt_insert_sparse.excluded.metadata,
-        "embedding": stmt_insert_sparse.excluded.embedding
-    }
+        "embedding": stmt_insert_sparse.excluded.embedding,
+    },
 )
 
 # Build Hash Check Statement (Idempotency)
 # Using strict form to avoid text = jsonb mismatch
-stmt_hash_check = select(dense_table.c.id).where(
-    dense_table.c.metadata["file_hash"].astext == bindparam("file_hash"),
-    dense_table.c.namespace.like(bindparam("namespace_prefix"))
-).limit(1)
+stmt_hash_check = (
+    select(dense_table.c.id)
+    .where(
+        dense_table.c.metadata["file_hash"].astext == bindparam("file_hash"),
+        dense_table.c.namespace.like(bindparam("namespace_prefix")),
+    )
+    .limit(1)
+)
 
 # ---------------------------------------------------------
 # Logging Setup
 # ---------------------------------------------------------
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------
@@ -267,16 +318,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------
 
 try:
-    nltk.data.find('tokenizers/punkt')
+    nltk.data.find("tokenizers/punkt")
 except LookupError:
-    nltk.download('punkt', quiet=True)
+    nltk.download("punkt", quiet=True)
 
 try:
-    nltk.data.find('corpora/stopwords')
+    nltk.data.find("corpora/stopwords")
 except LookupError:
-    nltk.download('stopwords', quiet=True)
+    nltk.download("stopwords", quiet=True)
 
-STOP_WORDS = set(stopwords.words('english'))
+STOP_WORDS = set(stopwords.words("english"))
 stemmer = PorterStemmer()
 
 # Tokenizer for OpenAI Embeddings
@@ -287,29 +338,30 @@ MAX_TOKEN_CAP = MAX_CHUNK_TOKENS
 # Utility Functions
 # ---------------------------------------------------------
 
+
 def murmurhash3_32(data: str) -> int:
     """Calculates the 32-bit MurmurHash3 value of a string."""
-    data_bytes = data.encode('utf-8')
+    data_bytes = data.encode("utf-8")
     length = len(data_bytes)
-    c1 = 0xcc9e2d51
-    c2 = 0x1b873593
+    c1 = 0xCC9E2D51
+    c2 = 0x1B873593
     h1 = 0
     nblocks = length // 4
 
     for i in range(nblocks):
-        k1 = int.from_bytes(data_bytes[i*4:(i+1)*4], 'little')
+        k1 = int.from_bytes(data_bytes[i * 4 : (i + 1) * 4], "little")
         k1 = (k1 * c1) & 0xFFFFFFFF
         k1 = ((k1 << 15) | (k1 >> 17)) & 0xFFFFFFFF
         k1 = (k1 * c2) & 0xFFFFFFFF
         h1 ^= k1
         h1 = ((h1 << 13) | (h1 >> 19)) & 0xFFFFFFFF
-        h1 = (h1 * 5 + 0xe6546b64) & 0xFFFFFFFF
+        h1 = (h1 * 5 + 0xE6546B64) & 0xFFFFFFFF
 
     h1 ^= length
     h1 ^= h1 >> 16
-    h1 = (h1 * 0x85ebca6b) & 0xFFFFFFFF
+    h1 = (h1 * 0x85EBCA6B) & 0xFFFFFFFF
     h1 ^= h1 >> 13
-    h1 = (h1 * 0xc2b2ae35) & 0xFFFFFFFF
+    h1 = (h1 * 0xC2B2AE35) & 0xFFFFFFFF
     h1 ^= h1 >> 16
 
     if h1 & 0x80000000:
@@ -317,10 +369,12 @@ def murmurhash3_32(data: str) -> int:
 
     return h1
 
+
 def file_hash(path: Union[str, Path]) -> str:
     """Computes the SHA-256 hash of a file for idempotency checks."""
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
+
 
 def encode_bm25(text: str) -> Dict[str, List[int]]:
     """Encodes text into a sparse BM25-compatible vector format."""
@@ -328,10 +382,10 @@ def encode_bm25(text: str) -> Dict[str, List[int]]:
         return {"indices": [], "values": []}
 
     tokens = nltk.word_tokenize(text.lower())
-    
+
     if USE_STOPWORDS:
         tokens = [t for t in tokens if t not in STOP_WORDS and len(t) > 1]
-    
+
     if USE_STEMMING:
         tokens = [stemmer.stem(t) for t in tokens]
 
@@ -347,9 +401,11 @@ def encode_bm25(text: str) -> Dict[str, List[int]]:
 
     return {"indices": indices, "values": values}
 
+
 # ---------------------------------------------------------
 # PDF Parsing (Docling)
 # ---------------------------------------------------------
+
 
 def _safe_model_dump(obj: Any) -> Any:
     """Best-effort conversion of pydantic-ish objects to JSON-serializable dicts."""
@@ -382,7 +438,9 @@ def _table_structured_from_docling(table_item: Any) -> Dict[str, Any]:
     rows: List[List[str]] = []
     if table_cells and num_rows > 0 and num_cols > 0:
         grid: List[List[str]] = [["" for _ in range(num_cols)] for _ in range(num_rows)]
-        header_mask: List[List[bool]] = [[False for _ in range(num_cols)] for _ in range(num_rows)]
+        header_mask: List[List[bool]] = [
+            [False for _ in range(num_cols)] for _ in range(num_rows)
+        ]
 
         for cell in table_cells:
             try:
@@ -466,59 +524,64 @@ def parse_pdf_with_docling(file_path: str) -> Tuple[str, List[Dict[str, Any]]]:
         if not table_text:
             # Last-resort: embed raw JSON-ish form.
             try:
-                table_text = json.dumps(structured.get("raw") or structured, ensure_ascii=False)[:4000]
+                table_text = json.dumps(
+                    structured.get("raw") or structured, ensure_ascii=False
+                )[:4000]
             except Exception:
                 table_text = str(structured.get("raw") or "")
 
-        table_chunks.append({
-            "text": table_text,
-            "metadata_overrides": {
-                "type": "table",
-                "table_text": table_text,
-                "table_structured": structured,
-                "table_index": idx,
-            },
-        })
+        table_chunks.append(
+            {
+                "text": table_text,
+                "metadata_overrides": {
+                    "type": "table",
+                    "table_text": table_text,
+                    "table_structured": structured,
+                    "table_index": idx,
+                },
+            }
+        )
 
     return full_text, table_chunks
+
 
 def extract_metadata(filename: str, file_path: str) -> Dict[str, Any]:
     """Extracts initial document metadata from filename and path."""
     metadata: Dict[str, Any] = {
-        'filename': filename,
-        'document_path': file_path,
-        'classification': 'regulation',
-        'indexed_at': datetime.now().isoformat()
+        "filename": filename,
+        "document_path": file_path,
+        "classification": "regulation",
+        "indexed_at": datetime.now().isoformat(),
     }
 
-    if filename.startswith('FAR_'):
-        metadata['source'] = 'FAR'
-        match = re.search(r'FAR_(\d+)', filename)
+    if filename.startswith("FAR_"):
+        metadata["source"] = "FAR"
+        match = re.search(r"FAR_(\d+)", filename)
         if match:
-            metadata['part'] = match.group(1)
-    elif filename.startswith('DFARS_'):
-        metadata['source'] = 'DFARS'
-        metadata['part'] = '201-253'
-    elif 'EM 385' in filename or 'EM_385' in filename:
-        metadata['source'] = 'EM385'
-        metadata['part'] = '1-1'
+            metadata["part"] = match.group(1)
+    elif filename.startswith("DFARS_"):
+        metadata["source"] = "DFARS"
+        metadata["part"] = "201-253"
+    elif "EM 385" in filename or "EM_385" in filename:
+        metadata["source"] = "EM385"
+        metadata["part"] = "1-1"
 
     return metadata
+
 
 def extract_clause_references(text: str) -> List[Dict[str, str]]:
     """Regex-based extraction of regulatory clause references."""
     refs: List[Dict[str, str]] = []
-    far_matches = re.findall(r'FAR\s+(\d+\.\d+(?:-\d+)?)', text, re.IGNORECASE)
+    far_matches = re.findall(r"FAR\s+(\d+\.\d+(?:-\d+)?)", text, re.IGNORECASE)
     for match in far_matches:
-        refs.append({'type': 'FAR', 'clause': match})
+        refs.append({"type": "FAR", "clause": match})
 
-    dfars_matches = re.findall(r'DFARS\s+(\d+\.\d+(?:-\d+)?)', text, re.IGNORECASE)
+    dfars_matches = re.findall(r"DFARS\s+(\d+\.\d+(?:-\d+)?)", text, re.IGNORECASE)
     for match in dfars_matches:
-        refs.append({'type': 'DFARS', 'clause': match})
+        refs.append({"type": "DFARS", "clause": match})
 
     return refs
 
-from parsing.classifier import classify_line
 
 def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, Any]]:
     """Parses flat text into hierarchical sections."""
@@ -539,7 +602,7 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
             continue
 
         if line_type == "PART":
-            match = re.search(r'PART\s+(\d+)', line, re.IGNORECASE)
+            match = re.search(r"PART\s+(\d+)", line, re.IGNORECASE)
             if match:
                 current_part = match.group(1)
                 current_appendix = None
@@ -547,19 +610,19 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
             continue
 
         if line_type == "SUBPART":
-            match = re.search(r'Subpart\s+(\d+\.\d+)', line, re.IGNORECASE)
+            match = re.search(r"Subpart\s+(\d+\.\d+)", line, re.IGNORECASE)
             if match:
                 current_subpart = match.group(1)
             continue
 
         if line_type == "CHAPTER":
-            match = re.search(r'Chapter\s+(\d+)', line, re.IGNORECASE)
+            match = re.search(r"Chapter\s+(\d+)", line, re.IGNORECASE)
             if match:
                 current_chapter = match.group(1)
             continue
 
         if line_type == "APPENDIX":
-            match = re.search(r'APPENDIX\s+([A-Z])', line, re.IGNORECASE)
+            match = re.search(r"APPENDIX\s+([A-Z])", line, re.IGNORECASE)
             if match:
                 current_appendix = match.group(1)
                 current_part = None
@@ -568,7 +631,7 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
             continue
 
         if line_type == "APPENDIX_PART":
-            match = re.search(r'Part\s+(\d+)', line, re.IGNORECASE)
+            match = re.search(r"Part\s+(\d+)", line, re.IGNORECASE)
             if match:
                 current_appendix_part = match.group(1)
             continue
@@ -576,9 +639,9 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
         if line_type == "APPENDIX_SECTION":
             if current_section:
                 sections.append(current_section)
-            
+
             # Match standard A-1 or Rule 1
-            match = re.match(r'^([A-Z]-\d+|Rule\s+\d+)\s*(.*)', line, re.IGNORECASE)
+            match = re.match(r"^([A-Z]-\d+|Rule\s+\d+)\s*(.*)", line, re.IGNORECASE)
             if match:
                 sec_num = match.group(1)
                 sec_title = match.group(2).strip()
@@ -587,15 +650,25 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
                     "section_title": sec_title if sec_title else sec_num,
                     "hierarchy_struct": {
                         "appendix": current_appendix,
-                        "appendix_part": current_appendix_part
+                        "appendix_part": current_appendix_part,
                     },
                     "hierarchy_path": [
-                        x for x in [
-                            f"Appendix {current_appendix}" if current_appendix else None,
-                            f"Part {current_appendix_part}" if current_appendix_part else None
-                        ] if x
+                        x
+                        for x in [
+                            (
+                                f"Appendix {current_appendix}"
+                                if current_appendix
+                                else None
+                            ),
+                            (
+                                f"Part {current_appendix_part}"
+                                if current_appendix_part
+                                else None
+                            ),
+                        ]
+                        if x
                     ],
-                    "full_text": line + "\n"
+                    "full_text": line + "\n",
                 }
             continue
 
@@ -603,7 +676,7 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
             if current_section:
                 sections.append(current_section)
             if source in ["FAR", "DFARS"]:
-                match = re.match(r'^(\d{2,3}\.\d{3}(?:-\d+)?)\s+(.+)', line)
+                match = re.match(r"^(\d{2,3}\.\d{3}(?:-\d+)?)\s+(.+)", line)
                 if match:
                     current_section = {
                         "section_number": match.group(1),
@@ -611,29 +684,47 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
                         "hierarchy_struct": {
                             "part": current_part,
                             "subpart": current_subpart,
-                            "appendix": current_appendix
+                            "appendix": current_appendix,
                         },
                         "hierarchy_path": [
-                            x for x in [
+                            x
+                            for x in [
                                 f"PART {current_part}" if current_part else None,
-                                f"Subpart {current_subpart}" if current_subpart else None,
-                                f"Appendix {current_appendix}" if current_appendix else None
-                            ] if x
+                                (
+                                    f"Subpart {current_subpart}"
+                                    if current_subpart
+                                    else None
+                                ),
+                                (
+                                    f"Appendix {current_appendix}"
+                                    if current_appendix
+                                    else None
+                                ),
+                            ]
+                            if x
                         ],
-                        "full_text": line + "\n"
+                        "full_text": line + "\n",
                     }
                     continue
             if source == "EM385":
-                match = re.match(r'^(\d+-\d+)\.\s+(.+)', line)
+                match = re.match(r"^(\d+-\d+)\.\s+(.+)", line)
                 if match:
                     current_section = {
                         "section_number": match.group(1),
                         "section_title": match.group(2).strip(),
                         "hierarchy_struct": {"chapter": current_chapter},
                         "hierarchy_path": [
-                            x for x in [f"Chapter {current_chapter}" if current_chapter else None] if x
+                            x
+                            for x in [
+                                (
+                                    f"Chapter {current_chapter}"
+                                    if current_chapter
+                                    else None
+                                )
+                            ]
+                            if x
                         ],
-                        "full_text": line + "\n"
+                        "full_text": line + "\n",
                     }
                     continue
 
@@ -644,9 +735,11 @@ def extract_structured_sections(full_text: str, source: str) -> List[Dict[str, A
         sections.append(current_section)
     return sections
 
+
 # ---------------------------------------------------------
 # Chunking Functions
 # ---------------------------------------------------------
+
 
 def count_tokens(text: str) -> int:
     """Returns the number of tokens in a text string."""
@@ -702,11 +795,15 @@ def _split_em385_sublevels(text: str) -> List[str]:
     return [b for b in blocks if b]
 
 
-def _split_anchor_and_remainder(section_text: str, desired_anchor_tokens: int = 150) -> Tuple[Optional[str], str]:
+def _split_anchor_and_remainder(
+    section_text: str, desired_anchor_tokens: int = 150
+) -> Tuple[Optional[str], str]:
     """Create anchor chunk = header + next 1–2 paragraphs (or token target)."""
     if not section_text:
         return None, ""
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", section_text.strip()) if p.strip()]
+    paragraphs = [
+        p.strip() for p in re.split(r"\n\s*\n+", section_text.strip()) if p.strip()
+    ]
     if not paragraphs:
         return None, section_text.strip()
     # Always include the first paragraph (usually contains the clause/section header line).
@@ -717,7 +814,7 @@ def _split_anchor_and_remainder(section_text: str, desired_anchor_tokens: int = 
             break
         anchor_parts.append(p)
     anchor_text = "\n\n".join(anchor_parts).strip()
-    remainder = "\n\n".join(paragraphs[len(anchor_parts):]).strip()
+    remainder = "\n\n".join(paragraphs[len(anchor_parts) :]).strip()
     return anchor_text if anchor_text else None, remainder
 
 
@@ -729,6 +826,7 @@ def _ensure_max_chunk_tokens(text: str) -> List[str]:
         return [text]
     # Reuse existing create_chunks() which already does paragraph/sentence/token fallback.
     return create_chunks(text)
+
 
 _ANCHOR_RE = re.compile(
     r"^\s*(?:FAR|DFARS)?\s*(?:52\.\d{3}-\d+|252\.\d{3}-\d+|\d{2,3}\.\d{3}(?:-\d+)?)\b",
@@ -755,7 +853,10 @@ def _is_em385_anchor(text: str) -> bool:
 
 def _keep_anchor_standalone(text: str) -> bool:
     """Keep clause/section-start chunks standalone (FAR/DFARS/EM385)."""
-    return KEEP_STANDALONE_ANCHOR_CHUNKS and (_is_anchor_chunk(text) or _is_em385_anchor(text))
+    return KEEP_STANDALONE_ANCHOR_CHUNKS and (
+        _is_anchor_chunk(text) or _is_em385_anchor(text)
+    )
+
 
 def _tail_overlap_by_tokens(parts: List[str], token_budget: int) -> List[str]:
     """Keep the tail of `parts` whose total token count fits the overlap budget."""
@@ -771,7 +872,10 @@ def _tail_overlap_by_tokens(parts: List[str], token_budget: int) -> List[str]:
         total += t
     return overlap
 
-def _merge_small_text_chunks(chunks: List[str], min_tokens: int, max_tokens: int) -> List[str]:
+
+def _merge_small_text_chunks(
+    chunks: List[str], min_tokens: int, max_tokens: int
+) -> List[str]:
     """Merge undersized chunks into adjacent chunks to reduce retrieval noise."""
     if not chunks:
         return []
@@ -804,6 +908,7 @@ def _merge_small_text_chunks(chunks: List[str], min_tokens: int, max_tokens: int
         merged.append(cur)
         i += 1
     return merged
+
 
 def _split_on_subclause_boundaries(text: str) -> List[str]:
     """Split FAR/DFARS block on line-start (a), (b), (1), (2), (i), (ii)."""
@@ -864,6 +969,7 @@ def _split_on_clause_boundaries(text: str, source: str) -> List[str]:
 
     return [b for b in blocks if b]
 
+
 def _passes_quality_gate(text: str) -> bool:
     """Reject chunks that are mostly noise (headers/footers/artifacts)."""
     if not text:
@@ -900,7 +1006,11 @@ def _merge_chunk_records_within_section(
         cur = dict(chunk_records[i])
         cur_text = cur.get("text", "")
         cur_tokens = count_tokens(cur_text)
-        if cur.get("is_anchor") or cur_tokens >= min_tokens or _keep_anchor_standalone(cur_text):
+        if (
+            cur.get("is_anchor")
+            or cur_tokens >= min_tokens
+            or _keep_anchor_standalone(cur_text)
+        ):
             merged.append(cur)
             i += 1
             continue
@@ -908,11 +1018,14 @@ def _merge_chunk_records_within_section(
         # Try merging tiny chunk into previous chunk in same section.
         if merged:
             prev = merged[-1]
-            same_section = (
-                prev.get("section_number") == cur.get("section_number")
-                and prev.get("section_title") == cur.get("section_title")
-            )
-            if same_section and not prev.get("is_anchor") and count_tokens(prev["text"]) + cur_tokens <= max_tokens:
+            same_section = prev.get("section_number") == cur.get(
+                "section_number"
+            ) and prev.get("section_title") == cur.get("section_title")
+            if (
+                same_section
+                and not prev.get("is_anchor")
+                and count_tokens(prev["text"]) + cur_tokens <= max_tokens
+            ):
                 prev["text"] = f"{prev['text']}\n\n{cur_text}"
                 i += 1
                 continue
@@ -920,11 +1033,14 @@ def _merge_chunk_records_within_section(
         # Or merge forward with next chunk in same section.
         if i + 1 < len(chunk_records):
             nxt = dict(chunk_records[i + 1])
-            same_section = (
-                nxt.get("section_number") == cur.get("section_number")
-                and nxt.get("section_title") == cur.get("section_title")
-            )
-            if same_section and not nxt.get("is_anchor") and cur_tokens + count_tokens(nxt.get("text", "")) <= max_tokens:
+            same_section = nxt.get("section_number") == cur.get(
+                "section_number"
+            ) and nxt.get("section_title") == cur.get("section_title")
+            if (
+                same_section
+                and not nxt.get("is_anchor")
+                and cur_tokens + count_tokens(nxt.get("text", "")) <= max_tokens
+            ):
                 nxt["text"] = f"{cur_text}\n\n{nxt['text']}"
                 chunk_records[i + 1] = nxt
                 i += 1
@@ -934,46 +1050,50 @@ def _merge_chunk_records_within_section(
         i += 1
     return merged
 
+
 def create_chunks(text: str) -> List[str]:
     """Breaks a text block into smaller chunks based on token count with overlap."""
     if not text:
         return []
 
     # Initial split by paragraphs
-    paragraphs = [p.strip() for p in re.split(r'\n\n+', text) if p.strip()]
+    paragraphs = [p.strip() for p in re.split(r"\n\n+", text) if p.strip()]
     chunks: List[str] = []
     current_chunk: List[str] = []
     current_tokens = 0
 
     for i, para in enumerate(paragraphs):
         para_tokens = count_tokens(para)
-        
+
         # If a single paragraph is larger than the cap, we must split it by sentences
         if para_tokens > MAX_TOKEN_CAP:
             if current_chunk:
                 chunks.append("\n\n".join(current_chunk))
                 current_chunk = []
                 current_tokens = 0
-            
-            sentences = re.split(r'(?<=[.!?])\s+', para)
+
+            sentences = re.split(r"(?<=[.!?])\s+", para)
             for sent in sentences:
                 sent_tokens = count_tokens(sent)
-                if (
-                    current_tokens + sent_tokens > TARGET_CHUNK_TOKENS
-                    and current_chunk
-                ):
+                if current_tokens + sent_tokens > TARGET_CHUNK_TOKENS and current_chunk:
                     chunks.append(" ".join(current_chunk))
-                    overlap_sentences = _tail_overlap_by_tokens(current_chunk, CHUNK_OVERLAP)
+                    overlap_sentences = _tail_overlap_by_tokens(
+                        current_chunk, CHUNK_OVERLAP
+                    )
                     current_chunk = overlap_sentences
                     current_tokens = sum(count_tokens(x) for x in overlap_sentences)
-                
+
                 if sent_tokens > MAX_TOKEN_CAP:
-                    logger.warning(f"Oversized sentence ({sent_tokens} tokens) found. Force-splitting.")
+                    logger.warning(
+                        f"Oversized sentence ({sent_tokens} tokens) found. Force-splitting."
+                    )
                     # Try meaning-preserving splits before token-window fallback.
                     # 1) Split on line-start style markers that may have been flattened into a single line.
                     marker_parts = re.split(r"\s(?=\([a-z]|\d+|[ivx]+\)\s)", sent)
                     marker_parts = [p.strip() for p in marker_parts if p.strip()]
-                    if len(marker_parts) > 1 and all(count_tokens(p) <= MAX_TOKEN_CAP for p in marker_parts):
+                    if len(marker_parts) > 1 and all(
+                        count_tokens(p) <= MAX_TOKEN_CAP for p in marker_parts
+                    ):
                         for p in marker_parts:
                             chunks.append(p)
                         continue
@@ -981,7 +1101,9 @@ def create_chunks(text: str) -> List[str]:
                     # 2) Split on semicolons / enumerator separators (common in legal text).
                     semi_parts = re.split(r";\s+", sent)
                     semi_parts = [p.strip() for p in semi_parts if p.strip()]
-                    if len(semi_parts) > 1 and all(count_tokens(p) <= MAX_TOKEN_CAP for p in semi_parts):
+                    if len(semi_parts) > 1 and all(
+                        count_tokens(p) <= MAX_TOKEN_CAP for p in semi_parts
+                    ):
                         for p in semi_parts:
                             chunks.append(p)
                         continue
@@ -1016,6 +1138,7 @@ def create_chunks(text: str) -> List[str]:
     merged = _merge_small_text_chunks(chunks, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
     return merged
 
+
 def create_section_aware_chunks(
     sections: List[Dict[str, Any]],
     source: str,
@@ -1033,17 +1156,21 @@ def create_section_aware_chunks(
         section_tokens = count_tokens(section_text)
 
         # Anchor enrichment: emit an anchor chunk (header + 1–2 paragraphs).
-        anchor_text, remainder = _split_anchor_and_remainder(section_text, desired_anchor_tokens=150)
+        anchor_text, remainder = _split_anchor_and_remainder(
+            section_text, desired_anchor_tokens=150
+        )
         if anchor_text:
             for part in _ensure_max_chunk_tokens(anchor_text):
-                all_chunks.append({
-                    "text": part,
-                    "section_number": section.get("section_number"),
-                    "section_title": section.get("section_title"),
-                    "hierarchy_struct": section.get("hierarchy_struct"),
-                    "hierarchy_path": section.get("hierarchy_path"),
-                    "is_anchor": True,
-                })
+                all_chunks.append(
+                    {
+                        "text": part,
+                        "section_number": section.get("section_number"),
+                        "section_title": section.get("section_title"),
+                        "hierarchy_struct": section.get("hierarchy_struct"),
+                        "hierarchy_path": section.get("hierarchy_path"),
+                        "is_anchor": True,
+                    }
+                )
 
         # Use remainder for the main body chunking (avoid duplicating anchor content).
         body_text = remainder if remainder else ""
@@ -1055,26 +1182,33 @@ def create_section_aware_chunks(
         # Section Integrity Guard: keep as one unit (then enforce max cap minimally).
         if force_keep:
             for part in _ensure_max_chunk_tokens(body_text):
-                all_chunks.append({
-                    "text": part,
-                    "section_number": section.get("section_number"),
-                    "section_title": section.get("section_title"),
-                    "hierarchy_struct": section.get("hierarchy_struct"),
-                    "hierarchy_path": section.get("hierarchy_path"),
-                })
+                all_chunks.append(
+                    {
+                        "text": part,
+                        "section_number": section.get("section_number"),
+                        "section_title": section.get("section_title"),
+                        "hierarchy_struct": section.get("hierarchy_struct"),
+                        "hierarchy_path": section.get("hierarchy_path"),
+                    }
+                )
             continue
 
         # Meaning-first gate: keep intact for <=800, or <=900 (no subclause split),
         # then enforce max-cap if needed.
-        if section_tokens <= KEEP_INTACT_TOKEN_LIMIT or section_tokens <= SUBCLAUSE_SPLIT_TOKEN_LIMIT:
+        if (
+            section_tokens <= KEEP_INTACT_TOKEN_LIMIT
+            or section_tokens <= SUBCLAUSE_SPLIT_TOKEN_LIMIT
+        ):
             for part in _ensure_max_chunk_tokens(body_text):
-                all_chunks.append({
-                    "text": part,
-                    "section_number": section.get("section_number"),
-                    "section_title": section.get("section_title"),
-                    "hierarchy_struct": section.get("hierarchy_struct"),
-                    "hierarchy_path": section.get("hierarchy_path"),
-                })
+                all_chunks.append(
+                    {
+                        "text": part,
+                        "section_number": section.get("section_number"),
+                        "section_title": section.get("section_title"),
+                        "hierarchy_struct": section.get("hierarchy_struct"),
+                        "hierarchy_path": section.get("hierarchy_path"),
+                    }
+                )
             continue
 
         # For >900 tokens: split by subclause/sublevel boundaries first.
@@ -1084,17 +1218,21 @@ def create_section_aware_chunks(
 
             if block_tokens <= SUBCLAUSE_SPLIT_TOKEN_LIMIT:
                 for part in _ensure_max_chunk_tokens(block):
-                    all_chunks.append({
-                        "text": part,
-                        "section_number": section.get("section_number"),
-                        "section_title": section.get("section_title"),
-                        "hierarchy_struct": section.get("hierarchy_struct"),
-                        "hierarchy_path": section.get("hierarchy_path"),
-                    })
+                    all_chunks.append(
+                        {
+                            "text": part,
+                            "section_number": section.get("section_number"),
+                            "section_title": section.get("section_title"),
+                            "hierarchy_struct": section.get("hierarchy_struct"),
+                            "hierarchy_path": section.get("hierarchy_path"),
+                        }
+                    )
                 continue
 
             if src in {"FAR", "DFARS"}:
-                sub_blocks = _split_on_subclause_boundaries(block)  # (a)(1)(i) at line start
+                sub_blocks = _split_on_subclause_boundaries(
+                    block
+                )  # (a)(1)(i) at line start
             elif src == "EM385":
                 sub_blocks = _split_em385_sublevels(block)
             else:
@@ -1110,13 +1248,15 @@ def create_section_aware_chunks(
 
                 parts = _merge_small_text_chunks(parts, MIN_CHUNK_TOKENS, MAX_TOKEN_CAP)
                 for chunk_text in parts:
-                    all_chunks.append({
-                        "text": chunk_text,
-                        "section_number": section.get("section_number"),
-                        "section_title": section.get("section_title"),
-                        "hierarchy_struct": section.get("hierarchy_struct"),
-                        "hierarchy_path": section.get("hierarchy_path"),
-                    })
+                    all_chunks.append(
+                        {
+                            "text": chunk_text,
+                            "section_number": section.get("section_number"),
+                            "section_title": section.get("section_title"),
+                            "hierarchy_struct": section.get("hierarchy_struct"),
+                            "hierarchy_path": section.get("hierarchy_path"),
+                        }
+                    )
 
     # Consolidate tiny chunks within sections, but never merge anchors.
     merged = _merge_chunk_records_within_section(
@@ -1126,24 +1266,27 @@ def create_section_aware_chunks(
     )
     return merged
 
+
 # ---------------------------------------------------------
 # Embedding and Persistence Logic
 # ---------------------------------------------------------
 
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
-    reraise=True
+    reraise=True,
 )
 async def _call_embedding_api(session: aiohttp.ClientSession, batch: List[str]):
     """Internal helper with retry logic for embedding API calls."""
     async with session.post(
         EMBEDDING_ENDPOINT,
-        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
         json={"model": EMBEDDING_MODEL, "input": batch},
-        timeout=30
+        timeout=30,
     ) as response:
         if response.status == 200:
             return await response.json()
@@ -1152,7 +1295,10 @@ async def _call_embedding_api(session: aiohttp.ClientSession, batch: List[str]):
             logger.error(f"OpenAI API Error {response.status}: {error_text}")
             raise RuntimeError(f"API Error {response.status}: {error_text}")
 
-async def generate_embeddings(chunks: List[Dict[str, Any]], session: aiohttp.ClientSession, filename: str) -> tuple[List[Dict[str, Any]], List[Optional[List[float]]]]:
+
+async def generate_embeddings(
+    chunks: List[Dict[str, Any]], session: aiohttp.ClientSession, filename: str
+) -> tuple[List[Dict[str, Any]], List[Optional[List[float]]]]:
     """Generates dense vector embeddings, with a guardrail for token limits."""
     final_chunks: List[Dict[str, Any]] = []
     embeddings: List[Optional[List[float]]] = []
@@ -1160,7 +1306,9 @@ async def generate_embeddings(chunks: List[Dict[str, Any]], session: aiohttp.Cli
     for i, chunk in enumerate(chunks):
         tokens = count_tokens(chunk["text"])
         if tokens > MAX_TOKEN_CAP:
-            logger.info(f"  Guardrail: {filename} chunk {i} exceeds limit ({tokens} tokens). Re-chunking.")
+            logger.info(
+                f"  Guardrail: {filename} chunk {i} exceeds limit ({tokens} tokens). Re-chunking."
+            )
             sub_texts = create_chunks(chunk["text"])
             for sub_text in sub_texts:
                 final_chunks.append({**chunk, "text": sub_text})
@@ -1169,8 +1317,10 @@ async def generate_embeddings(chunks: List[Dict[str, Any]], session: aiohttp.Cli
 
     texts = [c["text"] for c in final_chunks]
     for i in range(0, len(texts), BATCH_SIZE):
-        batch = texts[i:i+BATCH_SIZE]
-        logger.info(f"  Requesting embeddings for batch {i//BATCH_SIZE + 1} ({len(batch)} items)")
+        batch = texts[i : i + BATCH_SIZE]
+        logger.info(
+            f"  Requesting embeddings for batch {i//BATCH_SIZE + 1} ({len(batch)} items)"
+        )
         try:
             result = await _call_embedding_api(session, batch)
             for item in result["data"]:
@@ -1178,18 +1328,23 @@ async def generate_embeddings(chunks: List[Dict[str, Any]], session: aiohttp.Cli
         except Exception as e:
             logger.error(f"Failed embedding generation after retries: {e}")
             embeddings.extend([None] * len(batch))
-            
+
         if i + BATCH_SIZE < len(texts):
             await asyncio.sleep(EMBED_RATE_DELAY)
-    
+
     return final_chunks, embeddings
 
-async def store_chunks(chunks: List[Dict[str, Any]], embeddings: List[Optional[List[float]]], 
-                      base_metadata: Dict[str, Any], conn: AsyncConnection) -> None:
+
+async def store_chunks(
+    chunks: List[Dict[str, Any]],
+    embeddings: List[Optional[List[float]]],
+    base_metadata: Dict[str, Any],
+    conn: AsyncConnection,
+) -> None:
     """Upserts chunk data into the database using SQLAlchemy-generated SQL."""
     dense_params: List[Dict[str, Any]] = []
     sparse_params: List[Dict[str, Any]] = []
-    
+
     for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
         if embedding is None:
             continue
@@ -1238,23 +1393,27 @@ async def store_chunks(chunks: List[Dict[str, Any]], embeddings: List[Optional[L
         chunk_namespace = f"{NAMESPACE}-{source}"
 
         chunk_id = f"{chunk_namespace}-{base_metadata['filename']}-{i}"
-        
-        dense_params.append({
-            "id": chunk_id,
-            "namespace": chunk_namespace,
-            "text": text,
-            "metadata": metadata,
-            "embedding": embedding
-        })
-        
+
+        dense_params.append(
+            {
+                "id": chunk_id,
+                "namespace": chunk_namespace,
+                "text": text,
+                "metadata": metadata,
+                "embedding": embedding,
+            }
+        )
+
         sparse_emb = encode_bm25(text)
-        sparse_params.append({
-            "id": chunk_id,
-            "namespace": chunk_namespace,
-            "text": text,
-            "metadata": metadata,
-            "embedding": sparse_emb
-        })
+        sparse_params.append(
+            {
+                "id": chunk_id,
+                "namespace": chunk_namespace,
+                "text": text,
+                "metadata": metadata,
+                "embedding": sparse_emb,
+            }
+        )
 
     if not dense_params:
         return
@@ -1270,27 +1429,33 @@ async def store_chunks(chunks: List[Dict[str, Any]], embeddings: List[Optional[L
         await conn.execute(stmt_upsert_dense, dense_params)
         await conn.execute(stmt_upsert_sparse, sparse_params)
     except Exception as e:
-        logger.exception(f"Database bulk insert failure for {base_metadata['filename']}: {e}")
+        logger.exception(
+            f"Database bulk insert failure for {base_metadata['filename']}: {e}"
+        )
         raise
+
 
 # ---------------------------------------------------------
 # High-Level Orchestration
 # ---------------------------------------------------------
 
-async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: AsyncEngine) -> Dict[str, Any]:
+
+async def process_pdf(
+    file_path: str, session: aiohttp.ClientSession, engine: AsyncEngine
+) -> Dict[str, Any]:
     """Orchestrates the full ingestion pipeline for a single PDF file."""
     filename: str = Path(file_path).stem
     logger.info(f">> Processing file: {filename}")
 
     try:
         fhash: str = file_hash(file_path)
-        
+
         # Use engine.begin() for automatic transaction management
         async with engine.begin() as conn:
             # Check for existing hash using SQLAlchemy selection
             res = await conn.execute(
                 stmt_hash_check,
-                {"file_hash": fhash, "namespace_prefix": f"{NAMESPACE}%"}
+                {"file_hash": fhash, "namespace_prefix": f"{NAMESPACE}%"},
             )
             if res.first():
                 logger.info(f"  {filename}: File already processed. Skipping.")
@@ -1307,29 +1472,35 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
         before = len(chunks)
         chunks = dedupe_chunks_exact(chunks, scope="section")
         if len(chunks) != before:
-            logger.info(f"  {filename}: Dropped {before - len(chunks)} exact-duplicate chunks (pre-embed).")
+            logger.info(
+                f"  {filename}: Dropped {before - len(chunks)} exact-duplicate chunks (pre-embed)."
+            )
         # Add Docling tables as dedicated chunks (dual storage in metadata)
         if table_chunks:
             for t in table_chunks:
-                chunks.append({
-                    "text": t.get("text", ""),
-                    "section_number": None,
-                    "section_title": "Table",
-                    "hierarchy_struct": {},
-                    "hierarchy_path": [],
-                    "metadata_overrides": t.get("metadata_overrides") or {},
-                })
+                chunks.append(
+                    {
+                        "text": t.get("text", ""),
+                        "section_number": None,
+                        "section_title": "Table",
+                        "hierarchy_struct": {},
+                        "hierarchy_path": [],
+                        "metadata_overrides": t.get("metadata_overrides") or {},
+                    }
+                )
         if not chunks:
-            logger.warning(f"  {filename}: Structured section parsing returned no chunks. Using raw fallback chunking.")
+            logger.warning(
+                f"  {filename}: Structured section parsing returned no chunks. Using raw fallback chunking."
+            )
             chunks = [{"text": t} for t in create_chunks(normalized_text)]
         logger.info(f"  {filename}: Extracted {len(chunks)} chunks.")
 
         # Generate embeddings with token-limit guardrail
         chunks, embeddings = await generate_embeddings(chunks, session, filename)
-        
+
         async with engine.begin() as conn:
             await store_chunks(chunks, embeddings, metadata, conn)
-        
+
         logger.info(f"  {filename}: Pipeline complete.")
         return {"filename": filename, "chunks": len(chunks), "success": True}
 
@@ -1337,24 +1508,22 @@ async def process_pdf(file_path: str, session: aiohttp.ClientSession, engine: As
         logger.exception(f"Processing failed for {file_path}")
         return {"filename": filename, "error": str(e), "success": False}
 
+
 async def main() -> None:
     """Main entry point for discovery and parallel processing of regulatory PDFs."""
     if not SPECIFICATIONS_DIR.exists():
-        logger.error(f"FATAL: Specifications source directory not found: {SPECIFICATIONS_DIR}")
+        logger.error(
+            f"FATAL: Specifications source directory not found: {SPECIFICATIONS_DIR}"
+        )
         return
 
     pdf_files: List[str] = [str(p) for p in SPECIFICATIONS_DIR.rglob("*.pdf")]
 
     include_files = {
-        name.strip().lower()
-        for name in INCLUDE_FILES_RAW.split(",")
-        if name.strip()
+        name.strip().lower() for name in INCLUDE_FILES_RAW.split(",") if name.strip()
     }
     if include_files:
-        pdf_files = [
-            p for p in pdf_files
-            if Path(p).stem.lower() in include_files
-        ]
+        pdf_files = [p for p in pdf_files if Path(p).stem.lower() in include_files]
         logger.info(
             f"INCLUDE_FILES active. Processing {len(pdf_files)} file(s): "
             f"{', '.join(sorted(include_files))}"
@@ -1371,7 +1540,7 @@ async def main() -> None:
 
     try:
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_PDFS)
-        
+
         async def bounded_process(pdf_file: str) -> Dict[str, Any]:
             async with semaphore:
                 return await process_pdf(pdf_file, session, engine)
@@ -1379,10 +1548,11 @@ async def main() -> None:
         async with aiohttp.ClientSession() as session:
             tasks = [bounded_process(pdf) for pdf in pdf_files]
             await asyncio.gather(*tasks)
-            
+
     finally:
         await engine.dispose()
     logger.info("Pipeline execution complete.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

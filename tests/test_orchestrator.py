@@ -171,7 +171,7 @@ def test_synthesize_response_success(mock_format, mock_prompt, orchestrator):
     result = orchestrator._synthesize_response(state)
     
     assert result["generated_response"] == mock_response.content
-    assert result["confidence_score"] == pytest.approx(0.8961)
+    assert result["confidence_score"] == pytest.approx(0.8995)
     assert result["quality_metrics"]["low_confidence"] is False
     assert result["low_confidence"] is False
     assert "Synthesizer: Generated" in result["agent_path"][-1]

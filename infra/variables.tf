@@ -94,9 +94,51 @@ variable "openai_api_key" {
 }
 
 variable "model_name" {
-  description = "Primary model name"
+  description = "Primary model name (for reasoning/retrieval)"
   type        = string
   default     = "gpt-4o-mini"
+}
+
+variable "synthesizer_model" {
+  description = "Synthesizer model name (for final response generation)"
+  type        = string
+  default     = "gpt-4o"
+}
+
+variable "embedding_model" {
+  description = "Embedding model name"
+  type        = string
+  default     = "text-embedding-3-small"
+}
+
+variable "reranker_enabled" {
+  description = "Whether to use LLM-based reranking"
+  type        = bool
+  default     = true
+}
+
+variable "reflection_threshold" {
+  description = "Threshold for triggering self-healing reflection"
+  type        = number
+  default     = 0.50
+}
+
+variable "retrieval_top_k" {
+  description = "Number of documents to retrieve initially"
+  type        = number
+  default     = 20
+}
+
+variable "dashboard_request_timeout" {
+  description = "Timeout for dashboard requests in seconds"
+  type        = number
+  default     = 120
+}
+
+variable "debug_mode" {
+  description = "Whether to enable debug logging/mode"
+  type        = bool
+  default     = false
 }
 
 variable "jwt_secret_key" {

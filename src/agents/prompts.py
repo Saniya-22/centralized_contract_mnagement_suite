@@ -32,7 +32,7 @@ def _build_conversation_context(state: GovGigState) -> str:
 
 def get_data_retrieval_prompt(state: GovGigState) -> str:
     """System prompt for data retrieval agent."""
-    
+
     base_prompt = f"""You are a specialized Data Retrieval Agent for regulatory documents.
 
 Current Date: {state.get('current_date', 'Unknown')}
@@ -61,16 +61,18 @@ Guidelines:
 - Highlight the most relevant excerpts for the user
 - Note if information is not found in the available documents
 """
-    
+
     if state.get("cot_enabled", False):
-        base_prompt += "\n[Chain-of-Thought Mode] Explain your search strategy and reasoning."
-    
+        base_prompt += (
+            "\n[Chain-of-Thought Mode] Explain your search strategy and reasoning."
+        )
+
     return base_prompt
 
 
 def get_router_prompt(state: GovGigState) -> str:
     """System prompt for router agent."""
-    
+
     return f"""You are a Router Agent for the GovGig AI system.
 
 Current Date: {state.get('current_date', 'Unknown')}
@@ -105,17 +107,22 @@ Respond with the agent name and reasoning.
 def _is_procedural(state: GovGigState) -> bool:
     return bool(state.get("is_procedural", False))
 
+
 def _is_contract_co(state: GovGigState) -> bool:
     return bool(state.get("is_contract_co", False))
+
 
 def _is_document_request(state: GovGigState) -> bool:
     return bool(state.get("is_document_request", False))
 
+
 def _is_comparison(state: GovGigState) -> bool:
     return bool(state.get("is_comparison", False))
 
+
 def _is_construction_lifecycle(state: GovGigState) -> bool:
     return bool(state.get("is_construction_lifecycle", False))
+
 
 def _is_schedule_risk(state: GovGigState) -> bool:
     return bool(state.get("is_schedule_risk", False))
@@ -151,6 +158,7 @@ Response Style:
 - Then provide supporting explanation
 - Keep tone professional and helpful
 """
+
 
 def _mode_addendum(state: GovGigState) -> str:
     mode = (state.get("mode") or "").strip().lower()
@@ -189,10 +197,12 @@ def _mode_addendum(state: GovGigState) -> str:
 
 
 def get_synthesizer_prompt(
-    state: GovGigState, documents: list, evidence_summary: Optional[Dict[str, Any]] = None
+    state: GovGigState,
+    documents: list,
+    evidence_summary: Optional[Dict[str, Any]] = None,
 ) -> str:
     """System prompt for response synthesizer. evidence_summary can reinforce contract/CO when evidence is weak."""
-    
+
     doc_count = len(documents) if documents else 0
     intent = state.get("query_intent", "regulation_search")
     clause_ref = state.get("detected_clause_ref")
@@ -210,8 +220,10 @@ def get_synthesizer_prompt(
 - **Recommended structure**: Outline or key sections the document should include (bullets or short numbered list)
 - **Practical Note**: One line—tailor to your situation; consult contract/legal for the final document"""
     elif _is_schedule_risk(state):
-        clause_value = state.get("detected_clause_ref") or "UNKNOWN (not explicitly retrieved)"
-        intent_guidance = f"""Response Focus — SCHEDULE / DELAY RISK ANALYSIS:
+        clause_value = (
+            state.get("detected_clause_ref") or "UNKNOWN (not explicitly retrieved)"
+        )
+        intent_guidance = """Response Focus — SCHEDULE / DELAY RISK ANALYSIS:
 - This is a schedule or delay risk query. You MUST output the exact structured template below.
 - Fill each field with information from the retrieved excerpts. If a field is not explicitly covered by the retrieved excerpts, write: "Not explicitly stated in retrieved excerpts; treat as contract/CO-specific."
 - You MUST NOT invent clause numbers or requirements that are not in the retrieved excerpts.
@@ -250,7 +262,16 @@ After the template, you may add 1-3 bullets of practical guidance if helpful."""
 - **Key Requirements**: The core regulatory answer (2-5 bullets)
 - **Applicability**: Who/what/when this applies to (1-2 bullets, only if relevant)
 - **Practical Note**: One actionable takeaway for the contractor (1 bullet, only if applicable)"""
-    elif any(t in query_lower for t in ("mobilization", "clauses to review", "before project start", "which clauses", "key clauses")):
+    elif any(
+        t in query_lower
+        for t in (
+            "mobilization",
+            "clauses to review",
+            "before project start",
+            "which clauses",
+            "key clauses",
+        )
+    ):
         intent_guidance = """Response Focus — CLAUSES TO REVIEW / MOBILIZATION:
 - List operational clauses by category: commencement/delivery, payments, changes, suspension, termination/default
 - For each clause give one line on why it matters for mobilization or pre-award review
@@ -310,7 +331,11 @@ After the template, you may add 1-3 bullets of practical guidance if helpful."""
 - **Applicability**: Who/what/when this applies to (1-2 bullets, only if relevant)
 - **Practical Note**: One actionable takeaway for the contractor (1 bullet, only if applicable)"""
 
-    do_not_procedural = "\n- Do not use a 'Key Requirements' heading; use only 'Recommended steps:' or 'Steps to take:'." if is_procedural else ""
+    do_not_procedural = (
+        "\n- Do not use a 'Key Requirements' heading; use only 'Recommended steps:' or 'Steps to take:'."
+        if is_procedural
+        else ""
+    )
 
     evidence_note = ""
     if evidence_summary is not None:

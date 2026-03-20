@@ -2,6 +2,4 @@
 
 from src.agents.data_retrieval import DataRetrievalAgent
 
-__all__ = [
-    "DataRetrievalAgent"
-]
+__all__ = ["DataRetrievalAgent"]

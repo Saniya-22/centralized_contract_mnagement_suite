@@ -74,9 +74,7 @@ class SovereignGuard:
     ) -> Dict[str, Any]:
         action = str(payload.get("action") or "allow").lower()
         blocked = bool(
-            payload.get("should_block")
-            or payload.get("blocked")
-            or action == "block"
+            payload.get("should_block") or payload.get("blocked") or action == "block"
         )
         reason = payload.get("reason") or payload.get("explanation")
 
@@ -140,7 +138,10 @@ class SovereignGuard:
                     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
                     if response.status_code == 404:
-                        logger.info("Sovereign guard endpoint not found at %s, trying fallback", url)
+                        logger.info(
+                            "Sovereign guard endpoint not found at %s, trying fallback",
+                            url,
+                        )
                         continue
                     if response.status_code >= 400:
                         reason = (

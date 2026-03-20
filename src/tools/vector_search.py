@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ── Token budget helper ────────────────────────────────────────────────────────
 
+
 def _estimate_tokens(text: str) -> int:
     """Simple word-count based token estimator (mirrors JS _estimateTokens)."""
     word_count = len((text or "").split())
@@ -52,7 +53,9 @@ def _dedup_by_id(chunks: List[Dict]) -> List[Dict]:
     return out
 
 
-def _extract_refs_from_docs(docs: List[Dict[str, Any]], max_docs: int = 8) -> List[Dict[str, Any]]:
+def _extract_refs_from_docs(
+    docs: List[Dict[str, Any]], max_docs: int = 8
+) -> List[Dict[str, Any]]:
     refs: List[Dict[str, Any]] = []
     for d in (docs or [])[:max_docs]:
         meta = d.get("metadata") or {}
@@ -62,7 +65,9 @@ def _extract_refs_from_docs(docs: List[Dict[str, Any]], max_docs: int = 8) -> Li
     return refs
 
 
-def _extract_section_numbers(docs: List[Dict[str, Any]], max_docs: int = 8) -> List[str]:
+def _extract_section_numbers(
+    docs: List[Dict[str, Any]], max_docs: int = 8
+) -> List[str]:
     out: List[str] = []
     for d in (docs or [])[:max_docs]:
         meta = d.get("metadata") or {}
@@ -99,7 +104,9 @@ def _build_context_prioritized(
     taken_ids = set(primary_ids) | {a.get("id") for a in anchors if a.get("id")}
     refs = [r for r in refs if not (r.get("id") and r.get("id") in taken_ids)]
 
-    def _accumulate(cands: List[Dict[str, Any]], current: int, out: List[Dict[str, Any]]) -> int:
+    def _accumulate(
+        cands: List[Dict[str, Any]], current: int, out: List[Dict[str, Any]]
+    ) -> int:
         for c in cands:
             txt = c.get("text") or c.get("content") or ""
             t = _estimate_tokens(txt)
@@ -119,30 +126,35 @@ def _build_context_prioritized(
 
 # ── Input schemas ──────────────────────────────────────────────────────────────
 
+
 class VectorSearchInput(BaseModel):
     """Input schema for search_regulations tool."""
+
     query: str = Field(description="Natural language search query about regulations")
-    k: int = Field(default=10, ge=1, le=50, description="Number of results to return (1-50)")
+    k: int = Field(
+        default=10, ge=1, le=50, description="Number of results to return (1-50)"
+    )
     regulation_type: Optional[Literal["FAR", "DFARS", "EM385"]] = Field(
         default=None,
-        description="Filter by specific regulation type: FAR, DFARS, or EM385"
+        description="Filter by specific regulation type: FAR, DFARS, or EM385",
     )
     search_mode: Literal["hybrid", "dense"] = Field(
         default="hybrid",
-        description="'hybrid' uses dense+FTS+RRF (recommended), 'dense' uses vector only"
+        description="'hybrid' uses dense+FTS+RRF (recommended), 'dense' uses vector only",
     )
     exclude_meta_sections: bool = Field(
         default=True,
-        description="Exclude matrix/notes/appendix meta chunks from results (recommended)"
+        description="Exclude matrix/notes/appendix meta chunks from results (recommended)",
     )
     preferred_section_prefixes: Optional[List[str]] = Field(
         default=None,
-        description="Optional clause number prefixes to boost (e.g. 52.211, 52.232 for mobilization)"
+        description="Optional clause number prefixes to boost (e.g. 52.211, 52.232 for mobilization)",
     )
 
 
 class ClauseReferenceInput(BaseModel):
     """Input schema for get_clause_by_reference tool."""
+
     clause_reference: str = Field(
         description=(
             "Clause reference string, e.g. 'FAR 52.236-2', "
@@ -152,6 +164,7 @@ class ClauseReferenceInput(BaseModel):
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
+
 
 class VectorSearchTool:
     """Wraps the regulations search tool for binding to LangChain agents."""
@@ -221,7 +234,12 @@ class VectorSearchTool:
                 limit=25,
             )
             anchors = [
-                {**r, "content": r.get("text", ""), "retrieval_methods": (r.get("retrieval_methods") or []) + ["anchor_lookup"]}
+                {
+                    **r,
+                    "content": r.get("text", ""),
+                    "retrieval_methods": (r.get("retrieval_methods") or [])
+                    + ["anchor_lookup"],
+                }
                 for r in anchor_rows
             ]
 
@@ -236,7 +254,12 @@ class VectorSearchTool:
                 total_limit=20,
             )
             ref_ranked = [
-                {**r, "content": r.get("text", ""), "retrieval_methods": (r.get("retrieval_methods") or []) + ["ref_expand"]}
+                {
+                    **r,
+                    "content": r.get("text", ""),
+                    "retrieval_methods": (r.get("retrieval_methods") or [])
+                    + ["ref_expand"],
+                }
                 for r in ref_rows
             ]
             # Expand a bit more than top-2 to improve completeness for clause-heavy answers,
@@ -255,17 +278,26 @@ class VectorSearchTool:
             formatted: List[Dict[str, Any]] = []
             for idx, doc in enumerate(budgeted, 1):
                 meta = doc.get("metadata") or {}
-                formatted.append({
-                    "rank": idx,
-                    "content": doc.get("content") or doc.get("text", ""),
-                    "source": doc.get("source_file") or meta.get("source", ""),
-                    "regulation_type": meta.get("source", meta.get("regulation_type", "Unknown")),
-                    "section": meta.get("part", meta.get("section", "N/A")),
-                    "chunk_index": doc.get("chunk_index"),
-                    "score": float(doc.get("rerank_score") or doc.get("rrf_score") or doc.get("final_score") or 0),
-                    "retrieval_methods": doc.get("retrieval_methods", []),
-                    "metadata": meta,
-                })
+                formatted.append(
+                    {
+                        "rank": idx,
+                        "content": doc.get("content") or doc.get("text", ""),
+                        "source": doc.get("source_file") or meta.get("source", ""),
+                        "regulation_type": meta.get(
+                            "source", meta.get("regulation_type", "Unknown")
+                        ),
+                        "section": meta.get("part", meta.get("section", "N/A")),
+                        "chunk_index": doc.get("chunk_index"),
+                        "score": float(
+                            doc.get("rerank_score")
+                            or doc.get("rrf_score")
+                            or doc.get("final_score")
+                            or 0
+                        ),
+                        "retrieval_methods": doc.get("retrieval_methods", []),
+                        "metadata": meta,
+                    }
+                )
 
             logger.info(
                 f"[VectorSearch] Found {len(formatted)} results. "
