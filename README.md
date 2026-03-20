@@ -35,31 +35,59 @@ The backend is **Python-only** (FastAPI, LangGraph, OpenAI). Legacy Node.js code
 
 ## 3. Architecture
 
-```text
-┌──────────────────────────────────────────────────┐
-│              FastAPI Application                  │
-│   REST: POST /api/v1/query   WS: /ws/chat        │
-│   Auth: JWT  │  Rate Limit: 10 req/min/user      │
-└───────────────────────┬──────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────┐
-│          GovGigOrchestrator (LangGraph)           │
-│  Router → DataRetrieval (hybrid + reflection)     │
-│  → LetterDrafter / Synthesizer + SovereignGuard   │
-└───────────────────────┬──────────────────────────┘
-                        ▼
-┌──────────────────────────────────────────────────┐
-│            PostgreSQL + pgvector                   │
-│  embeddings_dense, FTS, RRF, cache, chat_history  │
-└──────────────────────────────────────────────────┘
+### System Overview
+
+The GovGig AI system follows a Retrieval-Augmented Generation (RAG) architecture, integrating specialized agents and tools to provide context-aware regulatory assistance.
+
+```mermaid
+graph TD
+    User([User]) <--> API[FastAPI Backend]
+    
+    subgraph "Orchestration (LangGraph)"
+        API <--> Orchestrator[GovGigOrchestrator]
+        Orchestrator --> Router{Query Router}
+        Router --> |Clause Lookup| ClauseTool[Clause Lookup Tool]
+        Router --> |Regulation Search| DataRetrieval[Data Retrieval Agent]
+        
+        DataRetrieval --> HybridSearch[Hybrid Search: Dense + FTS]
+        HybridSearch --> Reranker[LLM Reranker]
+        Reranker --> Reflection{Confidence Check}
+        Reflection --> |Low| Expansion[Query Expansion]
+        Expansion --> HybridSearch
+        
+        DataRetrieval --> |Context| Drafter[Letter Drafter]
+        DataRetrieval --> |Context| Synthesizer[Synthesizer]
+        
+        Drafter --> Guard[Sovereign Guard]
+        Synthesizer --> Guard
+    end
+    
+    subgraph "Data Layer"
+        ClauseTool <--> RDS[(PostgreSQL + pgvector)]
+        HybridSearch <--> RDS
+        Orchestrator <--> Cache[(Response Cache)]
+        Orchestrator <--> History[(Chat History)]
+    end
+    
+    subgraph "AI Services"
+        Orchestrator <--> LLM[OpenAI / Groq]
+        DataRetrieval <--> Embed[Embeddings API]
+    end
+    
+    Guard --> API
 ```
 
-- **Router:** Classifier decides intent (clause_lookup, regulation_search, out_of_scope, document_request). Clause lookup is served from DB; regulation search goes to Data Retrieval.
-- **Data Retrieval:** Hybrid vector + FTS, optional rerank, optional reflection (query expansion + re-search when confidence is low).
-- **After retrieval:** Letter requests → Letter Drafter; else → Synthesizer. Optional Sovereign Guard on generated text.
-- **Data:** Single PostgreSQL instance: embeddings (dense + sparse), FTS, cache table, chat history, users, analytics.
+### Core Components
 
-See **docs/GOVGIG_ARCHITECTURE.md** for diagrams and environment reference.
+- **FastAPI Backend:** Handles REST and WebSocket communication, JWT authentication, and rate limiting.
+- **GovGigOrchestrator (LangGraph):** Manages the stateful flow of queries through various specialized nodes.
+- **Query Router:** Classifies user intent to determine the optimal processing path (clause lookup, search, or document drafting).
+- **Data Retrieval Agent:** Performs hybrid search (dense embeddings + full-text search) from RDS, followed by optional LLM reranking and self-healing reflection (query expansion) if initial results are insufficient.
+- **Letter Drafter & Synthesizer:** Generate grounded responses or formal drafts based on retrieved regulatory context.
+- **Sovereign Guard:** A safety and compliance layer that reviews generated content before it reaches the user.
+- **Data Layer:** A unified PostgreSQL instance utilizing `pgvector` for semantic search, alongside standard relational tables for chat history, caching, and analytics.
+
+See **docs/GOVGIG_ARCHITECTURE.md** for detailed environment references and sequence diagrams.
 
 ---
 
@@ -269,15 +297,57 @@ PostgreSQL (with pgvector) and the app service are defined in `docker-compose.ym
 
 ---
 
-## 14. AWS (Terraform)
+## 14. AWS Deployment (Terraform)
 
-Infrastructure is in **infra/**: VPC, ECS Fargate, RDS PostgreSQL (pgvector), ALB, ECR, Secrets Manager, IAM, optional Route53.
+The project includes production-ready Infrastructure as Code (IaC) using Terraform in the `infra/` directory. The architecture leverages AWS managed services for high availability and scalability.
 
-1. Configure Terraform backend (e.g. S3) and variables (see `infra/` and `backend.hcl.example`).
-2. Run `./scripts/deploy.sh` (or `terraform init/plan/apply`).
-3. After RDS is up: run DB migrations/SQL and the ingest pipeline so the app has data.
+### Infrastructure Components
+- **Networking:** VPC with public/private subnets across multiple AZs.
+- **Compute:** ECS Fargate clusters for the API Backend and Dashboard.
+- **Storage:** RDS PostgreSQL with `pgvector` enabled.
+- **Load Balancing:** Application Load Balancer (ALB) for traffic distribution.
+- **Security:** IAM roles, Security Groups, and Secrets Manager for sensitive credentials.
+- **Registry:** ECR for Docker image management.
 
-See **docs/** and any README in **infra/** for details.
+### Deployment Steps
+
+1.  **Prerequisites:**
+    - Install AWS CLI, Terraform, and Docker.
+    - Configure AWS credentials (`aws configure`).
+    - Create an S3 bucket for Terraform state (optional but recommended).
+
+2.  **Initialize Infrastructure:**
+    ```bash
+    cd infra
+    # Create backend.hcl from backend.hcl.example and configure S3
+    terraform init -backend-config=backend.hcl
+    # Create terraform.tfvars from terraform.tfvars.example
+    terraform apply
+    ```
+
+3.  **Build and Push Docker Image:**
+    ```bash
+    # Retrieve ECR login password
+    aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.<region>.amazonaws.com
+    
+    # Build image
+    docker build -t govgig-backend .
+    
+    # Tag and push
+    docker tag govgig-backend:latest <aws_account_id>.dkr.ecr.<region>.amazonaws.com/govgig-backend:latest
+    docker push <aws_account_id>.dkr.ecr.<region>.amazonaws.com/govgig-backend:latest
+    ```
+
+4.  **Database Migration & Ingestion:**
+    - Access the RDS instance from a bastion host or via ECS task.
+    - Run DB migrations if necessary.
+    - Execute the ingestion pipeline (`ingest_python/pipeline.py`) to populate the vector store.
+
+5.  **Deploy Application:**
+    - Update the ECS service to pick up the new image.
+    - Terraform handles most of this via `terraform apply` when variables change.
+
+See **infra/README.md** (if available) or the comments in `infra/main.tf` for advanced configuration.
 
 ---
 
