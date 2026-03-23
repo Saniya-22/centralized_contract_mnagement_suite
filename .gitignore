@@ -72,3 +72,6 @@ MANIFEST
 # Project specific
 repository_summary.pdf
 results/
+section_number
+section_title
+*.numbers

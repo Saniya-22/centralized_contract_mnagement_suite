@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements
 COPY src/requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install Python dependencies to /usr/local (accessible by any user)
+RUN pip install --no-cache-dir --prefix=/usr/local -r requirements.txt
 
 # Stage 2: Runtime stage
 FROM python:3.11-slim
@@ -29,11 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local /root/.local
+# Copy Python packages from builder (installed to /usr/local, accessible by all users)
+COPY --from=builder /usr/local /usr/local
 
 # Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH \
+ENV PATH=/usr/local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

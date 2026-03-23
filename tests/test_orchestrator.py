@@ -55,6 +55,66 @@ async def test_route_query(orchestrator):
         assert delta["query_intent"] == QueryIntent.CLAUSE_LOOKUP.value
 
 
+@pytest.mark.asyncio
+async def test_oos_no_refusal(orchestrator):
+    """Out-of-scope queries should not hard-refuse; they should use Copilot fallback."""
+    state = {
+        "query": "What bases are within Navy Region NW?",
+        "chat_history": [],
+    }
+
+    with patch('src.agents.orchestrator.classify_query', new_callable=AsyncMock) as mock_classify:
+        mock_classify.return_value = Mock(
+            intent=QueryIntent.OUT_OF_SCOPE,
+            confidence=0.0,
+            clause_reference=None,
+            regulation_type=None,
+            is_procedural=False,
+            is_contract_co=False,
+            is_document_request=False,
+            is_comparison=False,
+            is_construction_lifecycle=False,
+            is_schedule_risk=False,
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = "General guidance for the question."
+        orchestrator.synthesizer_llm.invoke.return_value = mock_response
+
+        delta = await orchestrator._route_query(state)
+
+        assert "I can’t verify this from FAR/DFARS/EM385" not in (delta.get("generated_response") or "")
+        assert delta.get("mode") == "copilot"
+
+
+@pytest.mark.asyncio
+async def test_system_query(orchestrator):
+    """Product/system queries should receive the canned interface guidance (Copilot mode)."""
+    state = {
+        "query": "How do I upload specs?",
+        "chat_history": [],
+    }
+
+    with patch('src.agents.orchestrator.classify_query', new_callable=AsyncMock) as mock_classify:
+        mock_classify.return_value = Mock(
+            intent=QueryIntent.OUT_OF_SCOPE,
+            confidence=0.0,
+            clause_reference=None,
+            regulation_type=None,
+            is_procedural=False,
+            is_contract_co=False,
+            is_document_request=False,
+            is_comparison=False,
+            is_construction_lifecycle=False,
+            is_schedule_risk=False,
+        )
+
+        delta = await orchestrator._route_query(state)
+
+        assert "interface supports chat-based" in (delta.get("generated_response") or "").lower()
+        assert delta.get("mode") == "copilot"
+
+
 def test_determine_next_agent(orchestrator):
     """Test conditional transition logic."""
     # Test data_retrieval path
@@ -111,7 +171,7 @@ def test_synthesize_response_success(mock_format, mock_prompt, orchestrator):
     result = orchestrator._synthesize_response(state)
     
     assert result["generated_response"] == mock_response.content
-    assert result["confidence_score"] == pytest.approx(0.79)
+    assert result["confidence_score"] == pytest.approx(0.8995)
     assert result["quality_metrics"]["low_confidence"] is False
     assert result["low_confidence"] is False
     assert "Synthesizer: Generated" in result["agent_path"][-1]
@@ -126,7 +186,7 @@ def test_synthesize_response_no_docs(orchestrator):
 
     result = orchestrator._synthesize_response(state)
 
-    assert "sufficient high-confidence evidence" in result["generated_response"]
+    assert "The retrieved regulatory excerpts do not directly address this specific question" in result["generated_response"]
     assert "Synthesizer: No documents" in result["agent_path"][-1]
 
 
@@ -137,7 +197,7 @@ def test_draft_letter_no_docs(orchestrator):
         "retrieved_documents": [],
     }
     result = orchestrator._draft_letter(state)
-    assert "sufficient high-confidence evidence" in result["generated_response"]
+    assert "The retrieved regulatory excerpts do not directly address this specific question" in result["generated_response"]
     assert result["low_confidence"] is True
     assert any("LetterDrafter" in p for p in result["agent_path"])
 
@@ -293,7 +353,7 @@ def test_synthesize_response_uses_current_run_documents_only(mock_format, mock_p
     sent_docs = mock_format.call_args.args[0]
     assert len(sent_docs) == 1
     assert sent_docs[0]["content"] == "Current cited doc [FAR 52.236-2]."
-    assert result["confidence_score"] == pytest.approx(0.2)
+    assert result["confidence_score"] == pytest.approx(0.4915)
 
 
 def test_run_sync(orchestrator):

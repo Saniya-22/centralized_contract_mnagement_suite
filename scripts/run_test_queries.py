@@ -58,16 +58,22 @@ def _path_summary(agent_path):
         return "unknown"
     if any("clause_lookup" in p for p in agent_path):
         return "clause_lookup"
+    if any("Clarifier:" in p for p in agent_path):
+        return "clarifier"
     if any("regulation_search" in p for p in agent_path):
         return "regulation_search"
     return "other"
 
 
-def _reflection_triggered(agent_path):
+def _reflection_triggered(result):
+    """Check explicit flag first; fall back to agent_path heuristic for API results."""
+    if isinstance(result, dict) and "reflection_triggered" in result:
+        return bool(result["reflection_triggered"])
+    agent_path = result if isinstance(result, list) else (result or {}).get("agent_path", [])
     if not agent_path:
         return False
     return any(
-        "Reflection: Low" in p or "Self-healing: Added" in p
+        "Reflection: Low" in p or "Self-healing: Added" in p or "QualityGate:" in p
         for p in agent_path
     )
 
@@ -123,6 +129,10 @@ def _post_query(base_url: str, token: str, query: str) -> dict:
         raise RuntimeError(f"Query failed ({e.code}): {body.get('detail', e.reason)}")
 
 
+_CSV_FIELDS = ["index", "query", "response", "path", "doc_count", "confidence",
+               "mode", "reflection_triggered", "low_confidence", "show_banner"]
+
+
 def _row_from_result(index: int, query: str, result: dict) -> dict:
     """Build a single result row (for CSV) from API/orchestrator result."""
     agent_path = result.get("agent_path", [])
@@ -133,9 +143,12 @@ def _row_from_result(index: int, query: str, result: dict) -> dict:
         conf = str(conf)
     else:
         conf = ""
-    refl = _reflection_triggered(agent_path)
+    refl = _reflection_triggered(result)
     answer = (result.get("response") or "").strip()
+    mode = (result.get("mode") or "").strip() or ""
     low = result.get("low_confidence")
+    qm = result.get("quality_metrics") or {}
+    banner = qm.get("show_banner")
     return {
         "index": index,
         "query": query,
@@ -143,8 +156,10 @@ def _row_from_result(index: int, query: str, result: dict) -> dict:
         "path": path,
         "doc_count": docs,
         "confidence": conf,
+        "mode": mode,
         "reflection_triggered": "yes" if refl else "no",
         "low_confidence": "yes" if low else "no",
+        "show_banner": "yes" if banner else "no",
     }
 
 
@@ -159,7 +174,7 @@ def run_queries_via_api(queries, base_url: str, email: str, password: str, verbo
             path = _path_summary(agent_path)
             docs = len(result.get("documents", []))
             conf = result.get("confidence", "unknown")
-            refl = _reflection_triggered(agent_path)
+            refl = _reflection_triggered(result)
             answer = (result.get("response") or "").strip()
             preview = (answer[:300] + "…") if len(answer) > 300 else answer
             ref_str = " reflection_triggered=yes" if refl else ""
@@ -182,13 +197,14 @@ def run_queries_via_api(queries, base_url: str, email: str, password: str, verbo
             if csv_mode:
                 rows.append({
                     "index": i, "query": q, "response": f"ERROR: {type(e).__name__}: {e}",
-                    "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no", "low_confidence": "no",
+                    "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no",
+                    "low_confidence": "no", "show_banner": "no",
                 })
 
     if out_path:
         if csv_mode and rows:
             with open(out_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=["index", "query", "response", "path", "doc_count", "confidence", "reflection_triggered", "low_confidence"])
+                w = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
                 w.writeheader()
                 w.writerows(rows)
             print(f"Wrote {len(rows)} results (full responses) to {out_path}")
@@ -208,7 +224,7 @@ async def _run_one(orchestrator, q, i, verbose):
     conf = result.get("confidence", "unknown")
     answer = (result.get("response") or "").strip()
     preview = (answer[:300] + "…") if len(answer) > 300 else answer
-    refl = _reflection_triggered(result.get("agent_path", []))
+    refl = _reflection_triggered(result)
     ref_str = " reflection_triggered=yes" if refl else ""
     line = f"[{i}] path={path} docs={docs} confidence={conf}{ref_str}\n  Q: {q[:80]}{'…' if len(q) > 80 else ''}\n  A: {preview}"
     if verbose:
@@ -241,7 +257,8 @@ def run_queries_direct(queries, verbose=True, out_path=None, csv_mode=False):
                 if csv_mode:
                     rows.append({
                         "index": i, "query": q, "response": f"ERROR: {type(e).__name__}: {e}",
-                        "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no", "low_confidence": "no",
+                        "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no",
+                        "low_confidence": "no", "show_banner": "no",
                     })
 
     asyncio.run(_run_all())
@@ -249,7 +266,7 @@ def run_queries_direct(queries, verbose=True, out_path=None, csv_mode=False):
     if out_path:
         if csv_mode and rows:
             with open(out_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.DictWriter(f, fieldnames=["index", "query", "response", "path", "doc_count", "confidence", "reflection_triggered", "low_confidence"])
+                w = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
                 w.writeheader()
                 w.writerows(rows)
             print(f"Wrote {len(rows)} results (full responses) to {out_path}")

@@ -96,6 +96,38 @@ resource "aws_ecs_task_definition" "main" {
         {
           name  = "CORS_ORIGINS"
           value = jsonencode(var.cors_origins)
+        },
+        {
+          name  = "REGULATIONS_NAMESPACE"
+          value = "public-regulations"
+        },
+        {
+          name  = "SYNTHESIZER_MODEL"
+          value = var.synthesizer_model
+        },
+        {
+          name  = "EMBEDDING_MODEL"
+          value = var.embedding_model
+        },
+        {
+          name  = "RERANKER_ENABLED"
+          value = tostring(var.reranker_enabled)
+        },
+        {
+          name  = "REFLECTION_THRESHOLD"
+          value = tostring(var.reflection_threshold)
+        },
+        {
+          name  = "RETRIEVAL_TOP_K"
+          value = tostring(var.retrieval_top_k)
+        },
+        {
+          name  = "DASHBOARD_REQUEST_TIMEOUT"
+          value = tostring(var.dashboard_request_timeout)
+        },
+        {
+          name  = "DEBUG"
+          value = tostring(var.debug_mode)
         }
       ]
 

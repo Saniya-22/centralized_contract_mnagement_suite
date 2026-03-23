@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # ── Token budget helper ────────────────────────────────────────────────────────
 
+
 def _estimate_tokens(text: str) -> int:
     """Simple word-count based token estimator (mirrors JS _estimateTokens)."""
     word_count = len((text or "").split())
@@ -39,32 +40,121 @@ def _apply_token_budget(chunks: List[Dict], token_limit: int) -> List[Dict]:
     return final
 
 
+def _dedup_by_id(chunks: List[Dict]) -> List[Dict]:
+    seen = set()
+    out: List[Dict] = []
+    for c in chunks:
+        cid = c.get("id") or c.get("doc_id")
+        if cid and cid in seen:
+            continue
+        if cid:
+            seen.add(cid)
+        out.append(c)
+    return out
+
+
+def _extract_refs_from_docs(
+    docs: List[Dict[str, Any]], max_docs: int = 8
+) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    for d in (docs or [])[:max_docs]:
+        meta = d.get("metadata") or {}
+        for r in meta.get("clause_references") or []:
+            if isinstance(r, dict) and r.get("type") and r.get("clause"):
+                refs.append(r)
+    return refs
+
+
+def _extract_section_numbers(
+    docs: List[Dict[str, Any]], max_docs: int = 8
+) -> List[str]:
+    out: List[str] = []
+    for d in (docs or [])[:max_docs]:
+        meta = d.get("metadata") or {}
+        sn = meta.get("section_number")
+        if sn:
+            out.append(str(sn))
+    # de-dup preserve order
+    seen = set()
+    uniq = []
+    for s in out:
+        if s in seen:
+            continue
+        seen.add(s)
+        uniq.append(s)
+    return uniq
+
+
+def _build_context_prioritized(
+    primary: List[Dict[str, Any]],
+    anchors: List[Dict[str, Any]],
+    refs: List[Dict[str, Any]],
+    token_limit: int,
+) -> List[Dict[str, Any]]:
+    """Priority: primary, then anchors, then refs. If over limit, drop refs first."""
+    primary = _dedup_by_id(primary)
+    anchors = _dedup_by_id(anchors)
+    refs = _dedup_by_id(refs)
+
+    # Avoid duplicating anchors already present in primary.
+    primary_ids = {d.get("id") for d in primary if d.get("id")}
+    anchors = [a for a in anchors if not (a.get("id") and a.get("id") in primary_ids)]
+
+    # Avoid duplicating refs already present.
+    taken_ids = set(primary_ids) | {a.get("id") for a in anchors if a.get("id")}
+    refs = [r for r in refs if not (r.get("id") and r.get("id") in taken_ids)]
+
+    def _accumulate(
+        cands: List[Dict[str, Any]], current: int, out: List[Dict[str, Any]]
+    ) -> int:
+        for c in cands:
+            txt = c.get("text") or c.get("content") or ""
+            t = _estimate_tokens(txt)
+            if current + t > token_limit:
+                continue
+            out.append(c)
+            current += t
+        return current
+
+    out: List[Dict[str, Any]] = []
+    current = 0
+    current = _accumulate(primary, current, out)
+    current = _accumulate(anchors, current, out)
+    current = _accumulate(refs, current, out)
+    return out
+
+
 # ── Input schemas ──────────────────────────────────────────────────────────────
+
 
 class VectorSearchInput(BaseModel):
     """Input schema for search_regulations tool."""
+
     query: str = Field(description="Natural language search query about regulations")
-    k: int = Field(default=10, ge=1, le=50, description="Number of results to return (1-50)")
+    k: int = Field(
+        default=10, ge=1, le=50, description="Number of results to return (1-50)"
+    )
     regulation_type: Optional[Literal["FAR", "DFARS", "EM385"]] = Field(
         default=None,
-        description="Filter by specific regulation type: FAR, DFARS, or EM385"
+        description="Filter by specific regulation type: FAR, DFARS, or EM385",
     )
     search_mode: Literal["hybrid", "dense"] = Field(
         default="hybrid",
-        description="'hybrid' uses dense+FTS+RRF (recommended), 'dense' uses vector only"
+        description="'hybrid' uses dense+FTS+RRF (recommended), 'dense' uses vector only",
     )
     exclude_meta_sections: bool = Field(
         default=True,
-        description="Exclude matrix/notes/appendix meta chunks from results (recommended)"
+        description="Exclude matrix/notes/appendix meta chunks from results (recommended)",
     )
     preferred_section_prefixes: Optional[List[str]] = Field(
         default=None,
-        description="Optional clause number prefixes to boost (e.g. 52.211, 52.232 for mobilization)"
+        description="Optional clause number prefixes to boost (e.g. 52.211, 52.232 for mobilization)",
     )
 
 
 class ClauseReferenceInput(BaseModel):
     """Input schema for get_clause_by_reference tool."""
+
     clause_reference: str = Field(
         description=(
             "Clause reference string, e.g. 'FAR 52.236-2', "
@@ -74,6 +164,7 @@ class ClauseReferenceInput(BaseModel):
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
+
 
 class VectorSearchTool:
     """Wraps the regulations search tool for binding to LangChain agents."""
@@ -108,7 +199,7 @@ class VectorSearchTool:
                 f"type={regulation_type}, mode={search_mode}"
             )
 
-            # Generate dense embedding
+            # Generate dense embedding (used for primary retrieval and ref expansion ranking)
             query_embedding = get_embedding(query)
 
             # Run appropriate search
@@ -134,24 +225,79 @@ class VectorSearchTool:
             # Rerank with GPT-4o-mini
             reranked = rerank(query, fused)
 
-            # Apply token budget
-            budgeted = _apply_token_budget(reranked, settings.RAG_TOKEN_LIMIT)
+            # v2: Anchor fetch + ranked reference expansion (top 2)
+            section_numbers = _extract_section_numbers(reranked, max_docs=8)
+            anchor_rows = VectorQueries.get_anchor_chunks_for_sections(
+                section_numbers=section_numbers,
+                namespace=settings.REGULATIONS_NAMESPACE,
+                source=regulation_type,
+                limit=25,
+            )
+            anchors = [
+                {
+                    **r,
+                    "content": r.get("text", ""),
+                    "retrieval_methods": (r.get("retrieval_methods") or [])
+                    + ["anchor_lookup"],
+                }
+                for r in anchor_rows
+            ]
+
+            refs = _extract_refs_from_docs(reranked, max_docs=8)
+            ref_rows = VectorQueries.resolve_reference_chunks(
+                query_embedding=query_embedding,
+                refs=refs,
+                namespace=settings.REGULATIONS_NAMESPACE,
+                source=regulation_type,
+                exclude_ids=[d.get("id") for d in reranked if d.get("id")],
+                per_ref_limit=5,
+                total_limit=20,
+            )
+            ref_ranked = [
+                {
+                    **r,
+                    "content": r.get("text", ""),
+                    "retrieval_methods": (r.get("retrieval_methods") or [])
+                    + ["ref_expand"],
+                }
+                for r in ref_rows
+            ]
+            # Expand a bit more than top-2 to improve completeness for clause-heavy answers,
+            # while still keeping context tight under the token budget.
+            ref_top4 = ref_ranked[:4]
+
+            # v2: prioritized context builder within token limit
+            budgeted = _build_context_prioritized(
+                primary=reranked,
+                anchors=anchors,
+                refs=ref_top4,
+                token_limit=settings.RAG_TOKEN_LIMIT,
+            )
 
             # Format for agent consumption
             formatted: List[Dict[str, Any]] = []
             for idx, doc in enumerate(budgeted, 1):
                 meta = doc.get("metadata") or {}
-                formatted.append({
-                    "rank": idx,
-                    "content": doc.get("content") or doc.get("text", ""),
-                    "source": doc.get("source_file") or meta.get("source", ""),
-                    "regulation_type": meta.get("source", meta.get("regulation_type", "Unknown")),
-                    "section": meta.get("part", meta.get("section", "N/A")),
-                    "chunk_index": doc.get("chunk_index"),
-                    "score": float(doc.get("rerank_score") or doc.get("rrf_score") or doc.get("final_score") or 0),
-                    "retrieval_methods": doc.get("retrieval_methods", []),
-                    "metadata": meta,
-                })
+                formatted.append(
+                    {
+                        "rank": idx,
+                        "content": doc.get("content") or doc.get("text", ""),
+                        "source": doc.get("source_file") or meta.get("source", ""),
+                        "regulation_type": meta.get(
+                            "source", meta.get("regulation_type", "Unknown")
+                        ),
+                        "section": meta.get("part", meta.get("section", "N/A")),
+                        "chunk_index": doc.get("chunk_index"),
+                        "score": float(
+                            doc.get("rerank_score")
+                            or doc.get("rrf_score")
+                            or doc.get("final_score")
+                            or 0
+                        ),
+                        "retrieval_methods": doc.get("retrieval_methods", []),
+                        "metadata": meta,
+                    }
+                )
 
             logger.info(
                 f"[VectorSearch] Found {len(formatted)} results. "

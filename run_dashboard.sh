@@ -4,4 +4,5 @@
 export API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"
 echo "🚀 Starting GovGig Premium Dashboard... (API: $API_BASE_URL)"
 source venv/bin/activate
+pip install -q -r dashboard/requirements.txt
 PYTHONPATH=. ./venv/bin/streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true

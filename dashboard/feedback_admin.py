@@ -2,6 +2,7 @@
 Admin Feedback Dashboard — TOTAL / POSITIVE / NEGATIVE feedback counts from analytics summary.
 Run: streamlit run dashboard/feedback_admin.py
 """
+
 import streamlit as st
 import httpx
 import os
@@ -24,7 +25,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown("""
+st.markdown(
+    """
     <style>
     .stApp {
         background: linear-gradient(135deg, #1A1C2C 0%, #2D1B3D 50%, #1A1C2C 100%);
@@ -51,7 +53,9 @@ st.markdown("""
         font-weight: 700;
     }
     </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 
 def get_token():
@@ -60,14 +64,19 @@ def get_token():
         from src.config import settings
         from datetime import datetime, timedelta
         from jose import jwt
-        expire = datetime.utcnow() + timedelta(minutes=getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+
+        expire = datetime.utcnow() + timedelta(
+            minutes=getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 30)
+        )
         to_encode = {
             "sub": "internal-dashboard-admin",
             "exp": expire,
             "name": "Dashboard Admin",
             "role": "admin",
         }
-        return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+        return jwt.encode(
+            to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+        )
     except Exception:
         return os.getenv("DASHBOARD_JWT") or None
 
@@ -76,7 +85,10 @@ def fetch_summary():
     """GET /api/v1/analytics/summary and return feedback counts."""
     token = get_token()
     if not token:
-        return None, "No JWT available. Set DASHBOARD_JWT or ensure src.config is loadable."
+        return (
+            None,
+            "No JWT available. Set DASHBOARD_JWT or ensure src.config is loadable.",
+        )
     try:
         r = httpx.get(
             SUMMARY_URL,
@@ -98,7 +110,9 @@ st.markdown("---")
 data, err = fetch_summary()
 if err:
     st.error(f"Cannot load feedback summary: {err}")
-    st.info("Ensure the backend is running and JWT is configured (e.g. .env with JWT_SECRET_KEY).")
+    st.info(
+        "Ensure the backend is running and JWT is configured (e.g. .env with JWT_SECRET_KEY)."
+    )
     st.stop()
 
 total = data.get("feedback_total", 0)
@@ -108,28 +122,37 @@ negative = data.get("feedback_negative", 0)
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <div class="feedback-card">
             <div class="feedback-label">Total</div>
             <div class="feedback-value" style="color: white;">{total}</div>
         </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 with col2:
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <div class="feedback-card">
             <div class="feedback-label">Positive</div>
             <div class="feedback-value" style="color: {GREEN};">{positive}</div>
         </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 with col3:
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <div class="feedback-card">
             <div class="feedback-label">Negative</div>
             <div class="feedback-value" style="color: {NEGATIVE_COLOR};">{negative}</div>
         </div>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown("---")
 if st.button("Refresh"):

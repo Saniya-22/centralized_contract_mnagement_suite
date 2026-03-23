@@ -45,11 +45,7 @@ class RetrievalCritique:
             Dict containing 'passed' (bool), 'score' (float), and 'reason' (str).
         """
         if not documents:
-            return {
-                "passed": False,
-                "score": 0.0,
-                "reason": "No documents retrieved."
-            }
+            return {"passed": False, "score": 0.0, "reason": "No documents retrieved."}
 
         # ── 1. Score check ────────────────────────────────────────────────
         top_doc = documents[0]
@@ -90,7 +86,7 @@ class RetrievalCritique:
                     "reason": (
                         f"Regulation type mismatch: query asks for {query_reg} "
                         f"but top results are from other regulations."
-                    )
+                    ),
                 }
 
         # ── 3. Score threshold ────────────────────────────────────────────
@@ -110,7 +106,9 @@ class RetrievalCritique:
                 )
                 passed = True
 
-        reason = "High confidence match found." if passed else "Low retrieval confidence."
+        reason = (
+            "High confidence match found." if passed else "Low retrieval confidence."
+        )
         return {
             "passed": passed,
             "score": normalized_score,

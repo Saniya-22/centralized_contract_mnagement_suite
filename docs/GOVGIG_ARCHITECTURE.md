@@ -125,9 +125,9 @@ The GovGig AI backend (current scope) consists of:
 
 - **Data layer:** PostgreSQL with pgvector. Tables store embeddings, API cache, users, auth audit logs, chat history, feedback, analytics, and LangGraph checkpoints.
 
-- **External (outbound):** OpenAI (required) for embeddings, response synthesis, letter drafting, reranking, query classifier fallback, and reflection. Optional: Sovereign AI Guard (HTTP POST safety check for generated responses) and LangSmith (tracing and observability for LangGraph).
+- **External (outbound):** OpenAI (required) for embeddings, response synthesis, letter drafting, reranking, query classifier fallback, and reflection. Optional: Sovereign AI Guard (optional safety check for generated responses) and LangSmith (tracing and observability for LangGraph).
 
-**Data flow (high level):** Client → FastAPI (JWT, rate limit, route) → Query Router. Router outcomes: *clause lookup* (served from PostgreSQL); *regulation search* (hybrid vector + FTS in pgvector, optional OpenAI rerank, optional reflection, then Letter Drafter or Synthesizer via OpenAI); *out-of-scope* (direct response). Optional post-step: Sovereign Guard. All conversation history, analytics, feedback, and checkpoints are persisted in PostgreSQL. No explicit PII is required to be sent to OpenAI; user identity remains server-side (JWT and DB). Queries and retrieved regulatory chunks are sent for generation; thread identifiers can be used for anonymization if required by policy.
+**Data flow (high level):** Client → FastAPI (JWT, rate limit, route) → Query Router. Router outcomes: *clause lookup* (served from PostgreSQL); *regulation search* (hybrid vector + FTS in pgvector, optional OpenAI rerank, optional reflection, then Letter Drafter or Synthesizer via OpenAI); *out-of-scope* (direct response). Optional post-step: Sovereign Guard (disabled by default). All conversation history, analytics, feedback, and checkpoints are persisted in PostgreSQL. No explicit PII is required to be sent to OpenAI; user identity remains server-side (JWT and DB). Queries and retrieved regulatory chunks are sent for generation; thread identifiers can be used for anonymization if required by policy.
 
 ---
 
@@ -165,22 +165,24 @@ Source of truth: **Backend** [src/config.py](../src/config.py), **Ingest** [inge
 | REGULATIONS_NAMESPACE | Backend, Ingest | Namespace for regulations data (alias NAMESPACE in ingest). |
 | DATABASE_URL | Ingest | Full PostgreSQL URL (used by ingest only). |
 | **Vector search / RAG** | | |
-| DENSE_TOP_K | Backend | Top-K for dense search. |
-| SPARSE_TOP_K | Backend | Top-K for sparse search. |
-| HYBRID_DENSE_WEIGHT | Backend | Weight for dense in hybrid. |
-| HYBRID_SPARSE_WEIGHT | Backend | Weight for sparse in hybrid. |
-| RRF_K | Backend | Reciprocal Rank Fusion constant. |
-| RERANKER_ENABLED | Backend | Enable LLM reranker (true/false). |
-| RERANKER_MODEL | Backend | Model used for reranking. |
-| RAG_TOKEN_LIMIT | Backend | Max tokens in RAG context. |
-| RETRIEVAL_TOP_K | Backend | Primary retrieval size for regulation_search. |
-| REFLECTION_THRESHOLD | Backend | Confidence threshold for self-healing. |
-| REFLECTION_HEALING_MARGIN | Backend | Margin to skip borderline retries. |
-| SELF_HEALING_SEARCH_K | Backend | Per expanded query search depth. |
-| SELF_HEALING_MAX_QUERIES | Backend | Max expanded queries. |
-| SELF_HEALING_MAX_DOCS | Backend | Max additional docs from self-healing. |
-| MAX_DOC_CHARS_FOR_SYNTHESIS | Backend | Per-document trim before synthesis. |
-| SYNTHESIZER_MODEL | Backend | Model for response synthesis. |
+| DENSE_TOP_K | Backend | Top-K for dense search (Default: 15). |
+| SPARSE_TOP_K | Backend | Top-K for sparse search (Default: 10). |
+| HYBRID_DENSE_WEIGHT | Backend | Weight for dense in hybrid (Default: 0.7). |
+| HYBRID_SPARSE_WEIGHT | Backend | Weight for sparse in hybrid (Default: 0.3). |
+| RRF_K | Backend | Reciprocal Rank Fusion constant (Default: 60). |
+| RERANKER_ENABLED | Backend | Enable LLM reranker (Default: true). |
+| RERANKER_MODEL | Backend | Model used for reranking (Default: gpt-4o-mini). |
+| RAG_TOKEN_LIMIT | Backend | Max tokens in RAG context (Default: 2400). |
+| RETRIEVAL_TOP_K | Backend | Primary retrieval size for regulation_search (Default: 20). |
+| REFLECTION_THRESHOLD | Backend | Confidence threshold for self-healing (Default: 0.50). |
+| REFLECTION_HEALING_MARGIN | Backend | Margin to skip borderline retries (Default: 0.05). |
+| SELF_HEALING_SEARCH_K | Backend | Per expanded query search depth (Default: 3). |
+| SELF_HEALING_MAX_QUERIES | Backend | Max expanded queries (Default: 2). |
+| SELF_HEALING_MAX_DOCS | Backend | Max additional docs from self-healing (Default: 4). |
+| QUALITY_GATE_ENABLED | Backend | Post-synthesis quality gate (Default: true). |
+| QUALITY_GATE_THRESHOLD | Backend | Confidence below this triggers healing (Default: 0.35). |
+| MAX_DOC_CHARS_FOR_SYNTHESIS| Backend | Per-document trim before synthesis (Default: 1200). |
+| SYNTHESIZER_MODEL | Backend | Model for response synthesis (Default: gpt-4o). |
 | **LangGraph** | | |
 | MAX_ITERATIONS | Backend | LangGraph max iterations. |
 | RECURSION_LIMIT | Backend | Recursion limit. |

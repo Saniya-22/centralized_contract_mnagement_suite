@@ -1,13 +1,14 @@
 from parsing import rules
 
+
 def classify_line(line: str, source: str) -> str:
     """
     Classifies a line of text for structural parsing using the rule registry.
-    
+
     Args:
         line: The text line to classify.
         source: The document source type (FAR/DFARS/EM385).
-        
+
     Returns:
         The line type identifier (e.g., "PART", "SECTION", "BODY").
     """

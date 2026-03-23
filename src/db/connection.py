@@ -3,11 +3,12 @@
 import psycopg2
 from psycopg2 import pool, OperationalError
 from psycopg2.extras import RealDictCursor
-from contextlib import asynccontextmanager, contextmanager
-from typing import Generator, Optional, AsyncGenerator
+from contextlib import contextmanager
+from typing import Generator, Optional
 import logging
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from fastapi.concurrency import run_in_threadpool
 
 from src.config import settings
 
@@ -16,24 +17,24 @@ logger = logging.getLogger(__name__)
 
 class DatabaseConnectionPool:
     """Singleton connection pool for PostgreSQL"""
-    
-    _instance: Optional['DatabaseConnectionPool'] = None
+
+    _instance: Optional["DatabaseConnectionPool"] = None
     _pool: Optional[pool.ThreadedConnectionPool] = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         # Initialize lazily on first get_connection() call so imports and tests
         # do not require immediate DB connectivity.
         pass
-    
+
     def _initialize_pool(self):
         """Initialize the connection pool with retries"""
         from tenacity import retry, stop_after_attempt, wait_fixed
-        
+
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
         def do_init():
             return psycopg2.pool.ThreadedConnectionPool(
@@ -44,7 +45,7 @@ class DatabaseConnectionPool:
                 database=settings.PG_DB,
                 user=settings.PG_USER,
                 password=settings.PG_PASSWORD,
-                cursor_factory=RealDictCursor
+                cursor_factory=RealDictCursor,
             )
 
         try:
@@ -56,12 +57,12 @@ class DatabaseConnectionPool:
         except Exception as e:
             logger.error(f"Failed to initialize database pool after retries: {e}")
             raise
-    
+
     def get_connection(self):
         """Get a connection from the pool"""
         if self._pool is None:
             self._initialize_pool()
-        
+
         try:
             conn = self._pool.getconn()
             logger.debug("Connection acquired from pool")
@@ -69,7 +70,7 @@ class DatabaseConnectionPool:
         except OperationalError as e:
             logger.error(f"Failed to get connection from pool: {e}")
             raise
-    
+
     def return_connection(self, conn):
         """Return a connection to the pool"""
         if self._pool is not None and conn is not None:
@@ -77,8 +78,10 @@ class DatabaseConnectionPool:
                 self._pool.putconn(conn)
                 logger.debug("Connection returned to pool")
             except Exception as e:
-                logger.error(f"Failed to return connection to pool: {e}")
-    
+                # "trying to put unkeyed connection" is cosmetic — the connection
+                # is still usable.  Never close it here; that poisons the pool.
+                logger.debug(f"putconn warning (non-fatal): {e}")
+
     def close_all(self):
         """Close all connections in the pool"""
         if self._pool is not None:
@@ -94,7 +97,7 @@ _db_pool = DatabaseConnectionPool()
 @contextmanager
 def get_db_connection() -> Generator:
     """Context manager for database connections.
-    
+
     Usage:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -117,7 +120,7 @@ def get_db_connection() -> Generator:
 
 class CheckpointerManager:
     """Manages the lifecycle of the LangGraph Postgres checkpointer."""
-    
+
     _pool: Optional[AsyncConnectionPool] = None
     _checkpointer: Optional[AsyncPostgresSaver] = None
 
@@ -129,7 +132,7 @@ class CheckpointerManager:
             cls._pool = AsyncConnectionPool(
                 conninfo=settings.database_url,
                 max_size=settings.PG_POOL_MAX,
-                kwargs={"autocommit": True}
+                kwargs={"autocommit": True},
             )
             cls._checkpointer = AsyncPostgresSaver(cls._pool)
             # Ensure tables are created
@@ -146,8 +149,6 @@ class CheckpointerManager:
             cls._checkpointer = None
             logger.info("LangGraph Postgres checkpointer pool closed")
 
-
-from fastapi.concurrency import run_in_threadpool
 
 async def execute_in_db(func, *args, **kwargs):
     """Execute a database function safely in the thread pool."""
@@ -166,7 +167,8 @@ def test_connection():
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT 1")
-                result = cursor.fetchone()
+                # Test fetch
+                cursor.fetchone()
                 logger.info("Database connection test successful")
                 return True
     except Exception as e:
