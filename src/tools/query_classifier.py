@@ -7,7 +7,7 @@ regulations.
 Design principles
 -----------------
 - Waterfall Logic — layers run sequentially until a high-confidence match is found.
-- Hybrid Architecture — Uses deterministic regex for speed (Layer 1-3) and 
+- Hybrid Architecture — Uses deterministic regex for speed (Layer 1-3) and
   semantic embeddings/GPT-4o-mini for fallback (Layer 4-5).
 - Word-boundary keyword matching — prevents false positives from substrings.
 - Confidence scoring — every result carries a 0.0–1.0 confidence value.
@@ -26,6 +26,8 @@ import unicodedata
 import json
 import os
 import numpy as np
+from openai import AsyncOpenAI
+from src.config import settings
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Tuple, Dict
@@ -406,6 +408,21 @@ _PROCEDURAL_TRIGGERS: tuple[str, ...] = (
     "dispute",
 )
 
+_SAFETY_CRITICAL_TRIGGERS: tuple[str, ...] = (
+    "uxo",
+    "unexploded ordnance",
+    "fire at site",
+    "fire overnight",
+    "gas leak",
+    "hazardous discovery",
+    "immediate hazard",
+    "asbestos discovery",
+    "safety emergency",
+    "collapse",
+    "structural failure",
+    "trench collapse",
+)
+
 _CONTRACT_CO_TRIGGERS: tuple[str, ...] = (
     "how often",
     "how frequently",
@@ -422,7 +439,9 @@ _CONTRACT_CO_TRIGGERS: tuple[str, ...] = (
 
 _COMPARISON_PATTERN = re.compile(
     r"\bvs\.?\b|versus\b|difference(?:s)?\s+between\b|compar(?:e|ison)\s+(?:of|between)\b"
-    r"|how\s+(?:does?|do)\s+.{2,40}\s+differ\b|distinguish\s+between\b",
+    r"|how\s+(?:does?|do)\s+.{2,40}\s+differ\b|distinguish\s+between\b"
+    r"|instead\s+of\b|rather\s+than\b|choose\s+between\b|why\s+.{2,20}\s+and\s+not\b"
+    r"|when\s+to\s+use\b|better\s+to\s+use\b",
     re.IGNORECASE,
 )
 
@@ -592,6 +611,18 @@ def is_schedule_risk_query(query: str | None) -> bool:
     return bool(_SCHEDULE_RISK_RE.search(q) and _RISK_RE.search(q))
 
 
+def is_safety_critical_query(query: str | None) -> bool:
+    """True if the query involves an immediate safety hazard."""
+    if not query or not query.strip():
+        return False
+    q = query.strip().lower()
+    for trigger in _SAFETY_CRITICAL_TRIGGERS:
+        words = trigger.split()
+        if all(re.search(rf"\b{re.escape(w)}(?:s|es)?\b", q) for w in words):
+            return True
+    return False
+
+
 # ── Source normalisation ───────────────────────────────────────────────────────
 
 _SOURCE_NORM: dict[str, str] = {
@@ -667,6 +698,7 @@ class ClassificationResult:
         False  # commissioning, punchlist, closeout, testing
     )
     is_schedule_risk: bool = False  # schedule/delay risk analysis
+    is_safety_critical: bool = False  # UXO, fire, immediate hazard
 
     @property
     def is_clause_lookup(self) -> bool:
@@ -783,6 +815,48 @@ async def _get_semantic_intent(query: str) -> Tuple[QueryIntent, float]:
         return QueryIntent.OUT_OF_SCOPE, 0.0
 
 
+async def _llm_assess_specialised_intent(query: str) -> Dict[str, bool]:
+    """Uses a fast LLM pass to detectised Stage-1 Thinking intents (Comparison, Advisory, etc.)
+    when deterministic keywords/regex fail.
+    """
+    try:
+        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+        system_prompt = """You are a classification assistant for a Federal Contracting AI.
+Analyze the user query and determine if it belongs to any of these categories:
+- is_procedural: Asking for steps, "how to", "what should I do", sequence of actions.
+- is_contract_co: Asking about frequency, project-specific dates, or things typically in a contract/directed by a CO.
+- is_document_request: Asking to draft a letter, REA, RFI, or notice.
+- is_comparison: Asking to compare two concepts, why choose X over Y, "instead of", "better than".
+- is_construction_lifecycle: Asking about commissioning, punchlist, turnover, handover, closeout.
+- is_schedule_risk: Asking about delays, schedule impacts, time extensions, liquidated damages.
+- is_safety_critical: Immediate hazard, emergency, safety violation, STOP WORK situation.
+
+Respond ONLY with a JSON object containing these boolean flags.
+Example: {"is_comparison": true, "is_procedural": false, ...}"""
+
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Query: {query}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+            max_tokens=150,
+        )
+
+        content = response.choices[0].message.content
+        if not content:
+            return {}
+        return json.loads(content)
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).error(f"LLM intent assessment failed: {e}")
+        return {}
+
+
 async def _extract_clause_llm(query: str) -> Optional[Tuple[str, str]]:
     """Layer 5: Micro-LLM fallback for messy extraction."""
     try:
@@ -832,6 +906,14 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
     comp = is_comparison_query(normalised)
     const = is_construction_lifecycle_query(normalised)
     sched_risk = is_schedule_risk_query(normalised)
+    safety = is_safety_critical_query(normalised)
+
+    # ── Safety-Critical Promotion ────────────────────────────────────────────────
+    # If a query is safety-critical, it MUST be treated as an in-scope regulation search
+    # so that the synthesizer can apply its specialized safety formatting.
+    intent_override = None
+    if safety:
+        intent_override = QueryIntent.REGULATION_SEARCH
 
     # ── 0. Cache Check ───────────────────────────────────────────────────────────
     if normalised in _ASYNC_CACHE:
@@ -858,6 +940,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_comparison=comp,
             is_construction_lifecycle=const,
             is_schedule_risk=sched_risk,
+            is_safety_critical=safety,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -883,6 +966,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_comparison=comp,
             is_construction_lifecycle=const,
             is_schedule_risk=sched_risk,
+            is_safety_critical=safety,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -906,6 +990,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_comparison=comp,
             is_construction_lifecycle=const,
             is_schedule_risk=sched_risk,
+            is_safety_critical=safety,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -936,6 +1021,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_comparison=comp,
             is_construction_lifecycle=const,
             is_schedule_risk=sched_risk,
+            is_safety_critical=safety,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -953,6 +1039,7 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
             is_comparison=comp,
             is_construction_lifecycle=const,
             is_schedule_risk=sched_risk,
+            is_safety_critical=safety,
         )
         _ASYNC_CACHE[normalised] = res
         return res
@@ -995,19 +1082,40 @@ async def classify_query(query: Optional[str]) -> ClassificationResult:
                 is_comparison=comp,
                 is_construction_lifecycle=const,
                 is_schedule_risk=sched_risk,
+                is_safety_critical=safety,
             )
             _ASYNC_CACHE[normalised] = res
             return res
 
+    # ── 5.5. Nuanced Intent Refinement (Micro-LLM fallback) ─────────────────────
+    # If the deterministic layers (1-4) didn't identify a specialised intent,
+    # use a fast LLM pass to see if we missed a Comparison, Analytical, or Advisory intent.
+    if not any([proc, co, doc, comp, const, sched_risk, safety]):
+        llm_intents = await _llm_assess_specialised_intent(normalised)
+        if llm_intents:
+            proc = llm_intents.get("is_procedural", False)
+            co = llm_intents.get("is_contract_co", False)
+            doc = llm_intents.get("is_document_request", False)
+            comp = llm_intents.get("is_comparison", False)
+            const = llm_intents.get("is_construction_lifecycle", False)
+            sched_risk = llm_intents.get("is_schedule_risk", False)
+            safety = llm_intents.get("is_safety_critical", False)
+            intent_override = (
+                QueryIntent.REGULATION_SEARCH
+                if any([proc, co, doc, comp, const, sched_risk, safety])
+                else None
+            )
+
     # ── 6. Out of scope ────────────────────────────────────────────────────────────
     res = ClassificationResult(
-        intent=QueryIntent.OUT_OF_SCOPE,
-        confidence=0.0,
+        intent=intent_override or QueryIntent.OUT_OF_SCOPE,
+        confidence=0.55 if safety else 0.0,
         is_document_request=doc,
         document_request_type=doc_type,
         is_comparison=comp,
         is_construction_lifecycle=const,
         is_schedule_risk=sched_risk,
+        is_safety_critical=safety,
     )
     _ASYNC_CACHE[normalised] = res
     return res

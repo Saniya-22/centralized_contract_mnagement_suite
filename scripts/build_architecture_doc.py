@@ -4,6 +4,7 @@ Generate docs/GOVGIG_Architecture_And_Env.docx from docs/GOVGIG_ARCHITECTURE.md.
 Requires: pip install -r scripts/requirements-docs.txt
 Run from repo root: python scripts/build_architecture_doc.py
 """
+
 from pathlib import Path
 import re
 import sys
@@ -11,9 +12,11 @@ import sys
 try:
     from docx import Document
     from docx.shared import Pt, Inches
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
 except ImportError:
-    print("Missing python-docx. Run: pip install -r scripts/requirements-docs.txt", file=sys.stderr)
+    print(
+        "Missing python-docx. Run: pip install -r scripts/requirements-docs.txt",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -67,7 +70,10 @@ def extract_table_rows(text: str) -> list[list[str]]:
         if not cells:
             continue
         # Skip separator line (Variable | Used by | Purpose)
-        if all(set(c.replace("-", "").strip()) <= set(" ") or c.strip() == "" for c in cells):
+        if all(
+            set(c.replace("-", "").strip()) <= set(" ") or c.strip() == ""
+            for c in cells
+        ):
             continue
         rows.append(cells)
     return rows

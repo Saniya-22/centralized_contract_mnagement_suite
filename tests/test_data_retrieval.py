@@ -28,7 +28,7 @@ def sample_state():
         thought_process=[],
         agent_path=[],
         regulation_types_used=[],
-        errors=[]
+        errors=[],
     )
 
 
@@ -36,13 +36,13 @@ def test_agent_initialization(data_retrieval_agent):
     """Test agent initialization"""
     assert data_retrieval_agent is not None
     assert data_retrieval_agent.name == "DataRetrievalAgent"
-    assert hasattr(data_retrieval_agent, 'llm_with_tools')
+    assert hasattr(data_retrieval_agent, "llm_with_tools")
 
 
 def test_get_system_prompt(data_retrieval_agent, sample_state):
     """Test system prompt generation"""
     prompt = data_retrieval_agent.get_system_prompt(sample_state)
-    
+
     assert "Data Retrieval Agent" in prompt
     assert "FAR" in prompt
     assert "DFARS" in prompt
@@ -50,34 +50,38 @@ def test_get_system_prompt(data_retrieval_agent, sample_state):
 
 
 @pytest.mark.asyncio
-@patch('src.agents.data_retrieval.DataRetrievalAgent._create_messages')
-@patch('src.agents.base.ChatOpenAI')
-async def test_agent_run(mock_llm_class, mock_create_messages, data_retrieval_agent, sample_state):
+@patch("src.agents.data_retrieval.DataRetrievalAgent._create_messages")
+@patch("src.agents.base.ChatOpenAI")
+async def test_agent_run(
+    mock_llm_class, mock_create_messages, data_retrieval_agent, sample_state
+):
     """Test agent execution"""
     # Mock LLM instance and its bind_tools method
     mock_llm_instance = mock_llm_class.return_value
     mock_bound_llm = Mock()
     mock_llm_instance.bind_tools.return_value = mock_bound_llm
-    
+
     # Re-initialize agent to use mocked bind_tools
     agent = DataRetrievalAgent()
     agent.llm_with_tools = mock_bound_llm
-    
+
     # Mock LLM response
     mock_response = Mock()
     mock_response.tool_calls = []
     mock_response.content = "Test response"
     mock_bound_llm.invoke.return_value = mock_response
-    
+
     # Run agent
     result = await agent.run(sample_state)
-    
-    assert 'agent_path' in result
-    assert len(result['agent_path']) > 0
+
+    assert "agent_path" in result
+    assert len(result["agent_path"]) > 0
 
 
 @pytest.mark.asyncio
-async def test_agent_run_triggers_reflection_healing(data_retrieval_agent, sample_state):
+async def test_agent_run_triggers_reflection_healing(
+    data_retrieval_agent, sample_state
+):
     """Low-confidence critique should trigger healing and append healed docs."""
     # Route through direct regulation search path (no tool-selector dependency)
     sample_state["query_intent"] = QueryIntent.REGULATION_SEARCH
@@ -106,7 +110,9 @@ async def test_agent_run_triggers_reflection_healing(data_retrieval_agent, sampl
     healed_docs = [
         {"content": "Healed FAR snippet", "regulation_type": "FAR", "score": 0.8}
     ]
-    data_retrieval_agent.reflection_manager.heal_search = AsyncMock(return_value=healed_docs)
+    data_retrieval_agent.reflection_manager.heal_search = AsyncMock(
+        return_value=healed_docs
+    )
 
     result = await data_retrieval_agent.run(sample_state)
 
@@ -114,20 +120,37 @@ async def test_agent_run_triggers_reflection_healing(data_retrieval_agent, sampl
     assert result["retrieved_documents"][0]["content"] == "Initial FAR snippet"
     assert result["retrieved_documents"][1]["content"] == "Healed FAR snippet"
     assert result["reflection_triggered"] is True
-    assert any("Self-healing: Added 1 supplemental documents" in step for step in result["agent_path"])
+    assert any(
+        "Self-healing: Added 1 supplemental documents" in step
+        for step in result["agent_path"]
+    )
     data_retrieval_agent.reflection_manager.heal_search.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_agent_run_skips_healing_for_borderline_confidence(data_retrieval_agent, sample_state):
+async def test_agent_run_skips_healing_for_borderline_confidence(
+    data_retrieval_agent, sample_state
+):
     """Borderline confidence should skip expensive healing retries."""
     sample_state["query_intent"] = QueryIntent.REGULATION_SEARCH
     sample_state["detected_reg_type"] = "FAR"
 
     initial_docs = [
-        {"content": "Small business set-aside guidance", "regulation_type": "FAR", "score": 0.32},
-        {"content": "Additional FAR small business policy", "regulation_type": "FAR", "score": 0.30},
-        {"content": "Set-aside thresholds and exceptions", "regulation_type": "FAR", "score": 0.29},
+        {
+            "content": "Small business set-aside guidance",
+            "regulation_type": "FAR",
+            "score": 0.32,
+        },
+        {
+            "content": "Additional FAR small business policy",
+            "regulation_type": "FAR",
+            "score": 0.30,
+        },
+        {
+            "content": "Set-aside thresholds and exceptions",
+            "regulation_type": "FAR",
+            "score": 0.29,
+        },
     ]
     initial_tool_calls = [{"agent": "DataRetrievalAgent", "tool": "search_regulations"}]
     initial_reg_types = ["FAR"]
@@ -148,18 +171,31 @@ async def test_agent_run_skips_healing_for_borderline_confidence(data_retrieval_
 
     assert len(result["retrieved_documents"]) == 3
     data_retrieval_agent.reflection_manager.heal_search.assert_not_awaited()
-    assert any("skipping self-healing to preserve latency" in step.lower() for step in result["agent_path"])
+    assert any(
+        "skipping self-healing to preserve latency" in step.lower()
+        for step in result["agent_path"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_agent_run_triggers_healing_for_tiny_raw_rrf_score(data_retrieval_agent, sample_state):
+async def test_agent_run_triggers_healing_for_tiny_raw_rrf_score(
+    data_retrieval_agent, sample_state
+):
     """Tiny raw RRF score: system may skip healing for borderline; expect initial docs only."""
     sample_state["query_intent"] = QueryIntent.REGULATION_SEARCH
     sample_state["detected_reg_type"] = "EM385"
 
     initial_docs = [
-        {"content": "Initial EM385 snippet", "regulation_type": "EM385", "score": 0.0164},
-        {"content": "Additional EM385 snippet", "regulation_type": "EM385", "score": 0.0150},
+        {
+            "content": "Initial EM385 snippet",
+            "regulation_type": "EM385",
+            "score": 0.0164,
+        },
+        {
+            "content": "Additional EM385 snippet",
+            "regulation_type": "EM385",
+            "score": 0.0150,
+        },
         {"content": "Third EM385 snippet", "regulation_type": "EM385", "score": 0.0142},
     ]
     initial_tool_calls = [{"agent": "DataRetrievalAgent", "tool": "search_regulations"}]
@@ -177,7 +213,13 @@ async def test_agent_run_triggers_healing_for_tiny_raw_rrf_score(data_retrieval_
         }
     )
     data_retrieval_agent.reflection_manager.heal_search = AsyncMock(
-        return_value=[{"content": "Healed EM385 snippet", "regulation_type": "EM385", "score": 0.8}]
+        return_value=[
+            {
+                "content": "Healed EM385 snippet",
+                "regulation_type": "EM385",
+                "score": 0.8,
+            }
+        ]
     )
 
     result = await data_retrieval_agent.run(sample_state)

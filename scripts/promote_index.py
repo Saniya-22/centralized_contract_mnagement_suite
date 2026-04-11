@@ -78,8 +78,12 @@ def run_gates(
     gates: list[GateResult] = []
     enc = tiktoken.get_encoding("cl100k_base")
 
-    dense = fetch_count(cur, f"SELECT COUNT(*) FROM {dense_table} WHERE namespace LIKE %s", (ns_like,))
-    sparse = fetch_count(cur, f"SELECT COUNT(*) FROM {sparse_table} WHERE namespace LIKE %s", (ns_like,))
+    dense = fetch_count(
+        cur, f"SELECT COUNT(*) FROM {dense_table} WHERE namespace LIKE %s", (ns_like,)
+    )
+    sparse = fetch_count(
+        cur, f"SELECT COUNT(*) FROM {sparse_table} WHERE namespace LIKE %s", (ns_like,)
+    )
     gates.append(
         GateResult(
             ok=(dense > 0 and sparse > 0),
@@ -137,9 +141,13 @@ def run_gates(
     )
     model_rows = cur.fetchall()
     model_count = len(model_rows)
-    model_details = ", ".join([f"{m}:{c}" for m, c in model_rows]) if model_rows else "none"
+    model_details = (
+        ", ".join([f"{m}:{c}" for m, c in model_rows]) if model_rows else "none"
+    )
     gates.append(
-        GateResult(ok=(model_count == 1), message=f"Single embedding model ({model_details})")
+        GateResult(
+            ok=(model_count == 1), message=f"Single embedding model ({model_details})"
+        )
     )
 
     # Token quality gates
@@ -214,8 +222,12 @@ def promote(
             (target, archive_prefix, target, archive_prefix, target_like),
         )
     else:
-        cur.execute(f"DELETE FROM {sparse_table} WHERE namespace LIKE %s", (target_like,))
-        cur.execute(f"DELETE FROM {dense_table} WHERE namespace LIKE %s", (target_like,))
+        cur.execute(
+            f"DELETE FROM {sparse_table} WHERE namespace LIKE %s", (target_like,)
+        )
+        cur.execute(
+            f"DELETE FROM {dense_table} WHERE namespace LIKE %s", (target_like,)
+        )
 
     cur.execute(
         f"""
@@ -258,17 +270,31 @@ def promote(
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Promote indexed namespace with quality gates")
+    p = argparse.ArgumentParser(
+        description="Promote indexed namespace with quality gates"
+    )
     p.add_argument("--source", required=True, help="Source namespace prefix")
     p.add_argument("--target", required=True, help="Target namespace prefix")
     p.add_argument("--dense-table", default=env("PG_DENSE_TABLE", "embeddings_dense"))
-    p.add_argument("--sparse-table", default=env("PG_SPARSE_TABLE", "embeddings_sparse"))
-    p.add_argument("--min-chunk-tokens", type=int, default=int(env("MIN_CHUNK_TOKENS", "80")))
-    p.add_argument("--max-chunk-tokens", type=int, default=int(env("CHUNK_SIZE", "800")))
+    p.add_argument(
+        "--sparse-table", default=env("PG_SPARSE_TABLE", "embeddings_sparse")
+    )
+    p.add_argument(
+        "--min-chunk-tokens", type=int, default=int(env("MIN_CHUNK_TOKENS", "80"))
+    )
+    p.add_argument(
+        "--max-chunk-tokens", type=int, default=int(env("CHUNK_SIZE", "800"))
+    )
     p.add_argument("--max-tiny-non-anchor-pct", type=float, default=2.0)
     p.add_argument("--max-oversized-pct", type=float, default=1.0)
-    p.add_argument("--archive-existing", action="store_true", help="Archive current target rows before promotion")
-    p.add_argument("--apply", action="store_true", help="Execute promotion (default: dry-run)")
+    p.add_argument(
+        "--archive-existing",
+        action="store_true",
+        help="Archive current target rows before promotion",
+    )
+    p.add_argument(
+        "--apply", action="store_true", help="Execute promotion (default: dry-run)"
+    )
     args = p.parse_args()
 
     cfg = load_db()
@@ -307,7 +333,9 @@ def main() -> None:
                 raise SystemExit(2)
 
             if not args.apply:
-                print("\nDry-run complete. All gates passed. Re-run with --apply to promote.")
+                print(
+                    "\nDry-run complete. All gates passed. Re-run with --apply to promote."
+                )
                 return
 
             print("\n-- Executing Promotion --")
@@ -327,4 +355,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

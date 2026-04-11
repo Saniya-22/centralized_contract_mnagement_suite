@@ -559,6 +559,7 @@ class GovGigOrchestrator:
             "is_comparison": classification.is_comparison,
             "is_construction_lifecycle": classification.is_construction_lifecycle,
             "is_schedule_risk": classification.is_schedule_risk,
+            "is_safety_critical": classification.is_safety_critical,
             "mode": None,
             "agent_path": [
                 f"Router: intent={intent.value} conf={classification.confidence:.2f} "
@@ -570,7 +571,7 @@ class GovGigOrchestrator:
                 )
                 + (
                     f" proc={classification.is_procedural} co={classification.is_contract_co} doc={classification.is_document_request}"
-                    f" comp={classification.is_comparison} const={classification.is_construction_lifecycle} sched_risk={classification.is_schedule_risk} "
+                    f" comp={classification.is_comparison} const={classification.is_construction_lifecycle} sched_risk={classification.is_schedule_risk} safety={classification.is_safety_critical} "
                     if (
                         classification.is_procedural
                         or classification.is_contract_co
@@ -578,6 +579,7 @@ class GovGigOrchestrator:
                         or classification.is_comparison
                         or classification.is_construction_lifecycle
                         or classification.is_schedule_risk
+                        or classification.is_safety_critical
                     )
                     else ""
                 )

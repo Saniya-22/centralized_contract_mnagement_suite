@@ -67,7 +67,9 @@ async def test_heal_search_returns_flattened_results():
             return [{"content": "doc1"}, {"content": "doc2"}]
         return [{"content": "doc3"}]
 
-    result = await manager.heal_search("base query", "Low retrieval confidence.", fake_search)
+    result = await manager.heal_search(
+        "base query", "Low retrieval confidence.", fake_search
+    )
 
     assert len(result) == 3
     assert {d["content"] for d in result} == {"doc1", "doc2", "doc3"}
@@ -82,7 +84,9 @@ async def test_heal_search_returns_empty_when_no_expansions():
     async def fake_search(_query):
         return [{"content": "should-not-run"}]
 
-    result = await manager.heal_search("base query", "No documents retrieved.", fake_search)
+    result = await manager.heal_search(
+        "base query", "No documents retrieved.", fake_search
+    )
 
     assert result == []
 

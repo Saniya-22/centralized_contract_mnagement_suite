@@ -28,6 +28,7 @@ from dotenv import dotenv_values
 # Optional: numpy for cosine. Fallback to manual dot/norm.
 try:
     import numpy as np
+
     _HAS_NUMPY = True
 except ImportError:
     _HAS_NUMPY = False
@@ -112,6 +113,7 @@ def fetch_embeddings_batch(
 ) -> list[list[float]]:
     """Call OpenAI embeddings API in batches. Returns list of embedding vectors."""
     import time
+
     # Avoid empty strings (API can reject)
     texts = [t if t.strip() else " " for t in texts]
     all_embeddings: list[list[float]] = []
@@ -175,7 +177,10 @@ def main() -> None:
     args = parser.parse_args()
 
     if not _HAS_NUMPY:
-        print("Warning: numpy not installed. Using pure-Python cosine (slower).", file=sys.stderr)
+        print(
+            "Warning: numpy not installed. Using pure-Python cosine (slower).",
+            file=sys.stderr,
+        )
 
     if OpenAI is None:
         print("Error: openai package required. pip install openai", file=sys.stderr)
@@ -188,7 +193,9 @@ def main() -> None:
 
     cfg = _load_db_config()
     if not cfg["dbname"] or not cfg["user"]:
-        print("Error: Missing DB config. Set PG_DB and PG_USER in .env", file=sys.stderr)
+        print(
+            "Error: Missing DB config. Set PG_DB and PG_USER in .env", file=sys.stderr
+        )
         sys.exit(1)
 
     ns_like = f"{args.namespace_prefix}%"
@@ -228,7 +235,11 @@ def main() -> None:
     chunks: list[dict[str, Any]] = []
     for row in rows:
         chunk_id, text, meta = row[0], row[1] or "", row[2] or {}
-        source = (meta.get("source") or meta.get("regulation_type") or "UNKNOWN") if isinstance(meta, dict) else "UNKNOWN"
+        source = (
+            (meta.get("source") or meta.get("regulation_type") or "UNKNOWN")
+            if isinstance(meta, dict)
+            else "UNKNOWN"
+        )
         chunks.append({"id": chunk_id, "text": text, "source": source})
 
     print("\n== Chunk Coherence Report ==")
@@ -255,12 +266,20 @@ def main() -> None:
     n_single = sum(1 for s in chunk_sentences if len(s) <= 1)
     n_multi = sum(1 for s in chunk_sentences if len(s) > 1)
     print("\n-- Sentence split (sanity) --")
-    _print_kv("Chunks with 0-1 sentences (coherence=1.0 by convention)", f"{n_single} ({100.0 * n_single / len(chunks):.1f}%)")
-    _print_kv("Chunks with 2+ sentences (coherence computed)", f"{n_multi} ({100.0 * n_multi / len(chunks):.1f}%)")
+    _print_kv(
+        "Chunks with 0-1 sentences (coherence=1.0 by convention)",
+        f"{n_single} ({100.0 * n_single / len(chunks):.1f}%)",
+    )
+    _print_kv(
+        "Chunks with 2+ sentences (coherence computed)",
+        f"{n_multi} ({100.0 * n_multi / len(chunks):.1f}%)",
+    )
 
     # Only multi-sentence chunks get embeddings; coherence_scores will hold only their computed values
     coherence_scores: list[float] = []
-    chunk_to_embed_indices: list[tuple[int, list[int]]] = []  # (chunk_idx, [sent indices in flat list])
+    chunk_to_embed_indices: list[
+        tuple[int, list[int]]
+    ] = []  # (chunk_idx, [sent indices in flat list])
     flat_sentences: list[str] = []
     sent_index = 0
     for i, sents in enumerate(chunk_sentences):
@@ -274,14 +293,18 @@ def main() -> None:
 
     if not flat_sentences:
         print("\n-- Within-chunk coherence --")
-        print("No multi-sentence chunks in sample; nothing to embed. All scores are 1.0 by convention.")
+        print(
+            "No multi-sentence chunks in sample; nothing to embed. All scores are 1.0 by convention."
+        )
         print("\nReport complete.")
         return
 
     # 3) Batch embed all sentences
     client = OpenAI(api_key=api_key)
     print("\nEmbedding sentences (batches of %s)..." % args.batch_size)
-    all_embeddings = fetch_embeddings_batch(client, args.embedding_model, flat_sentences, args.batch_size)
+    all_embeddings = fetch_embeddings_batch(
+        client, args.embedding_model, flat_sentences, args.batch_size
+    )
 
     # 4) Per-chunk coherence for multi-sentence chunks
     for chunk_idx, sent_indices in chunk_to_embed_indices:
@@ -302,8 +325,16 @@ def main() -> None:
     sorted_scores = sorted(all_scores)
     p50 = sorted_scores[len(sorted_scores) // 2] if sorted_scores else 0.0
     p90 = sorted_scores[int(len(sorted_scores) * 0.9)] if sorted_scores else 0.0
-    low = sum(1 for s in all_scores if s < 0.4) / len(all_scores) * 100.0 if all_scores else 0.0
-    very_low = sum(1 for s in all_scores if s < 0.25) / len(all_scores) * 100.0 if all_scores else 0.0
+    low = (
+        sum(1 for s in all_scores if s < 0.4) / len(all_scores) * 100.0
+        if all_scores
+        else 0.0
+    )
+    very_low = (
+        sum(1 for s in all_scores if s < 0.25) / len(all_scores) * 100.0
+        if all_scores
+        else 0.0
+    )
 
     print("\n-- Within-chunk coherence (mean pairwise cosine, 0-1) --")
     _print_kv("Avg coherence", f"{avg_coh:.3f}")

@@ -9,6 +9,7 @@ from unittest.mock import patch, AsyncMock
 
 # ─── Root and health (no auth) ───
 
+
 @pytest.mark.api
 def test_root_endpoint(client):
     """Root returns welcome and version."""
@@ -42,6 +43,7 @@ def test_docs_and_redoc(client):
 
 
 # ─── Query endpoint ───
+
 
 @pytest.mark.api
 def test_query_endpoint_validation(client):
@@ -127,6 +129,7 @@ def test_query_orchestrator_unavailable_503(client):
 
 # ─── Clause lookup ───
 
+
 @pytest.mark.api
 def test_clause_lookup_success(client):
     """Clause lookup returns 200 and clause when found."""
@@ -162,6 +165,7 @@ def test_clause_requires_auth(client_no_auth):
 
 
 # ─── Auth: signup ───
+
 
 @pytest.mark.api
 def test_signup_success(client_no_auth):
@@ -202,7 +206,10 @@ def test_signup_email_already_registered(client_no_auth):
         )
         assert response.status_code == 409
         data = response.json()
-        assert "already registered" in data.get("detail", "").lower() or data.get("status") == "Signup unsuccessful"
+        assert (
+            "already registered" in data.get("detail", "").lower()
+            or data.get("status") == "Signup unsuccessful"
+        )
 
 
 @pytest.mark.api
@@ -233,6 +240,7 @@ def test_signup_validation(client_no_auth):
 
 
 # ─── Auth: login ───
+
 
 @pytest.mark.api
 def test_login_success(client_no_auth):
@@ -293,6 +301,7 @@ def test_login_user_not_found(client_no_auth):
 
 # ─── Feedback ───
 
+
 @pytest.mark.api
 def test_feedback_success(client):
     """Feedback with valid body returns 201."""
@@ -334,6 +343,7 @@ def test_feedback_validation(client):
 
 # ─── Chat: threads and history ───
 
+
 @pytest.mark.api
 def test_chat_threads_success(client):
     """GET /chat/threads returns 200 and threads list."""
@@ -370,6 +380,7 @@ def test_chat_history_requires_auth(client_no_auth):
 
 
 # ─── Analytics ───
+
 
 @pytest.mark.api
 def test_analytics_summary_success(client):

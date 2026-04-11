@@ -65,7 +65,9 @@ def main() -> None:
 
     cfg = _load_db_config()
     if not cfg["dbname"] or not cfg["user"]:
-        print("Error: Missing DB config. Set PG_DB and PG_USER in .env", file=sys.stderr)
+        print(
+            "Error: Missing DB config. Set PG_DB and PG_USER in .env", file=sys.stderr
+        )
         sys.exit(1)
 
     ns_like = f"{args.namespace_prefix}%"
@@ -94,11 +96,15 @@ def main() -> None:
             ids_to_delete = [row[0] for row in cur.fetchall()]
 
     if not ids_to_delete:
-        print("No duplicate rows found (one row per md5(text) already). Nothing to delete.")
+        print(
+            "No duplicate rows found (one row per md5(text) already). Nothing to delete."
+        )
         return
 
     n = len(ids_to_delete)
-    print(f"Duplicate rows to remove: {n} (keeping one per md5(text) in namespace {args.namespace_prefix!r})")
+    print(
+        f"Duplicate rows to remove: {n} (keeping one per md5(text) in namespace {args.namespace_prefix!r})"
+    )
     print(f"Tables: {dense_table}, {sparse_table}")
 
     if not args.execute:
@@ -129,7 +135,9 @@ def main() -> None:
                 deleted_dense += cur.rowcount
             conn.commit()
 
-    print(f"\n[EXECUTE] Deleted: {deleted_sparse} from {sparse_table}, {deleted_dense} from {dense_table}.")
+    print(
+        f"\n[EXECUTE] Deleted: {deleted_sparse} from {sparse_table}, {deleted_dense} from {dense_table}."
+    )
     print("Run chunk_quality_report.py again to verify duplicate groups are 0.")
 
 

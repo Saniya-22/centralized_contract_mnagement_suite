@@ -20,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 def load_env():
     from dotenv import dotenv_values
+
     env_path = PROJECT_ROOT / ".env"
     if env_path.exists():
         return dotenv_values(env_path)
@@ -27,20 +28,31 @@ def load_env():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Clear regulations index and run full re-ingest")
-    ap.add_argument("--dry-run", action="store_true", help="Only report row counts and skip DELETE + ingest")
+    ap = argparse.ArgumentParser(
+        description="Clear regulations index and run full re-ingest"
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Only report row counts and skip DELETE + ingest",
+    )
     args = ap.parse_args()
 
     env = load_env()
     db_url = env.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
     if not db_url:
-        print("ERROR: DATABASE_URL not set. Set it in .env or environment.", file=sys.stderr)
+        print(
+            "ERROR: DATABASE_URL not set. Set it in .env or environment.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
         import psycopg
     except ImportError:
-        print("ERROR: psycopg not installed. pip install psycopg[binary]", file=sys.stderr)
+        print(
+            "ERROR: psycopg not installed. pip install psycopg[binary]", file=sys.stderr
+        )
         sys.exit(1)
 
     dense_table = env.get("PG_DENSE_TABLE", "embeddings_dense")
@@ -53,11 +65,19 @@ def main():
 
     with psycopg.connect(conninfo) as conn:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM {dense_table} WHERE namespace LIKE %s", (namespace_like,))
+            cur.execute(
+                f"SELECT COUNT(*) FROM {dense_table} WHERE namespace LIKE %s",
+                (namespace_like,),
+            )
             dense_count = cur.fetchone()[0]
-            cur.execute(f"SELECT COUNT(*) FROM {sparse_table} WHERE namespace LIKE %s", (namespace_like,))
+            cur.execute(
+                f"SELECT COUNT(*) FROM {sparse_table} WHERE namespace LIKE %s",
+                (namespace_like,),
+            )
             sparse_count = cur.fetchone()[0]
-    print(f"Current index: {dense_count} dense rows, {sparse_count} sparse rows (namespace LIKE '{namespace_like}')")
+    print(
+        f"Current index: {dense_count} dense rows, {sparse_count} sparse rows (namespace LIKE '{namespace_like}')"
+    )
 
     if args.dry_run:
         print("Dry-run: skipping DELETE and re-ingest.")
@@ -66,9 +86,13 @@ def main():
     print("Deleting from embeddings_sparse and embeddings_dense...")
     with psycopg.connect(conninfo) as conn:
         with conn.cursor() as cur:
-            cur.execute(f"DELETE FROM {sparse_table} WHERE namespace LIKE %s", (namespace_like,))
+            cur.execute(
+                f"DELETE FROM {sparse_table} WHERE namespace LIKE %s", (namespace_like,)
+            )
             sparse_deleted = cur.rowcount
-            cur.execute(f"DELETE FROM {dense_table} WHERE namespace LIKE %s", (namespace_like,))
+            cur.execute(
+                f"DELETE FROM {dense_table} WHERE namespace LIKE %s", (namespace_like,)
+            )
             dense_deleted = cur.rowcount
         conn.commit()
     print(f"Deleted: {sparse_deleted} sparse, {dense_deleted} dense.")

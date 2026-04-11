@@ -69,7 +69,9 @@ def _reflection_triggered(result):
     """Check explicit flag first; fall back to agent_path heuristic for API results."""
     if isinstance(result, dict) and "reflection_triggered" in result:
         return bool(result["reflection_triggered"])
-    agent_path = result if isinstance(result, list) else (result or {}).get("agent_path", [])
+    agent_path = (
+        result if isinstance(result, list) else (result or {}).get("agent_path", [])
+    )
     if not agent_path:
         return False
     return any(
@@ -79,6 +81,7 @@ def _reflection_triggered(result):
 
 
 # ── API client ───────────────────────────────────────────────────────────────
+
 
 def _get_token(base_url: str, email: str, password: str) -> str:
     url = f"{base_url.rstrip('/')}/api/v1/auth/login"
@@ -129,8 +132,18 @@ def _post_query(base_url: str, token: str, query: str) -> dict:
         raise RuntimeError(f"Query failed ({e.code}): {body.get('detail', e.reason)}")
 
 
-_CSV_FIELDS = ["index", "query", "response", "path", "doc_count", "confidence",
-               "mode", "reflection_triggered", "low_confidence", "show_banner"]
+_CSV_FIELDS = [
+    "index",
+    "query",
+    "response",
+    "path",
+    "doc_count",
+    "confidence",
+    "mode",
+    "reflection_triggered",
+    "low_confidence",
+    "show_banner",
+]
 
 
 def _row_from_result(index: int, query: str, result: dict) -> dict:
@@ -163,7 +176,15 @@ def _row_from_result(index: int, query: str, result: dict) -> dict:
     }
 
 
-def run_queries_via_api(queries, base_url: str, email: str, password: str, verbose=True, out_path=None, csv_mode=False):
+def run_queries_via_api(
+    queries,
+    base_url: str,
+    email: str,
+    password: str,
+    verbose=True,
+    out_path=None,
+    csv_mode=False,
+):
     token = _get_token(base_url, email, password)
     lines = []
     rows = []
@@ -195,11 +216,19 @@ def run_queries_via_api(queries, base_url: str, email: str, password: str, verbo
                 print()
             lines.append(line)
             if csv_mode:
-                rows.append({
-                    "index": i, "query": q, "response": f"ERROR: {type(e).__name__}: {e}",
-                    "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no",
-                    "low_confidence": "no", "show_banner": "no",
-                })
+                rows.append(
+                    {
+                        "index": i,
+                        "query": q,
+                        "response": f"ERROR: {type(e).__name__}: {e}",
+                        "path": "error",
+                        "doc_count": 0,
+                        "confidence": "",
+                        "reflection_triggered": "no",
+                        "low_confidence": "no",
+                        "show_banner": "no",
+                    }
+                )
 
     if out_path:
         if csv_mode and rows:
@@ -216,6 +245,7 @@ def run_queries_via_api(queries, base_url: str, email: str, password: str, verbo
 
 
 # ── Direct (orchestrator) ─────────────────────────────────────────────────────
+
 
 async def _run_one(orchestrator, q, i, verbose):
     result = await orchestrator.run_async(q)
@@ -255,11 +285,19 @@ def run_queries_direct(queries, verbose=True, out_path=None, csv_mode=False):
                     print()
                 lines.append(line)
                 if csv_mode:
-                    rows.append({
-                        "index": i, "query": q, "response": f"ERROR: {type(e).__name__}: {e}",
-                        "path": "error", "doc_count": 0, "confidence": "", "reflection_triggered": "no",
-                        "low_confidence": "no", "show_banner": "no",
-                    })
+                    rows.append(
+                        {
+                            "index": i,
+                            "query": q,
+                            "response": f"ERROR: {type(e).__name__}: {e}",
+                            "path": "error",
+                            "doc_count": 0,
+                            "confidence": "",
+                            "reflection_triggered": "no",
+                            "low_confidence": "no",
+                            "show_banner": "no",
+                        }
+                    )
 
     asyncio.run(_run_all())
 
@@ -278,16 +316,43 @@ def run_queries_direct(queries, verbose=True, out_path=None, csv_mode=False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Run test queries (API or direct orchestrator)")
-    ap.add_argument("--api", action="store_true", help="Hit API (login + POST /api/v1/query) instead of in-process orchestrator")
-    ap.add_argument("--api-url", metavar="URL", default=os.environ.get("API_BASE_URL", "http://localhost:8000"), help="API base URL (default: API_BASE_URL or http://localhost:8000)")
-    ap.add_argument("--email", metavar="EMAIL", default=os.environ.get("API_TEST_EMAIL"), help="Login email (or API_TEST_EMAIL)")
-    ap.add_argument("--password", metavar="PASS", default=os.environ.get("API_TEST_PASSWORD"), help="Login password (or API_TEST_PASSWORD)")
+    ap = argparse.ArgumentParser(
+        description="Run test queries (API or direct orchestrator)"
+    )
+    ap.add_argument(
+        "--api",
+        action="store_true",
+        help="Hit API (login + POST /api/v1/query) instead of in-process orchestrator",
+    )
+    ap.add_argument(
+        "--api-url",
+        metavar="URL",
+        default=os.environ.get("API_BASE_URL", "http://localhost:8000"),
+        help="API base URL (default: API_BASE_URL or http://localhost:8000)",
+    )
+    ap.add_argument(
+        "--email",
+        metavar="EMAIL",
+        default=os.environ.get("API_TEST_EMAIL"),
+        help="Login email (or API_TEST_EMAIL)",
+    )
+    ap.add_argument(
+        "--password",
+        metavar="PASS",
+        default=os.environ.get("API_TEST_PASSWORD"),
+        help="Login password (or API_TEST_PASSWORD)",
+    )
     ap.add_argument("--all", action="store_true", help="Run extended query list")
-    ap.add_argument("--list", metavar="FILE", help="Run queries from file (one per line)")
+    ap.add_argument(
+        "--list", metavar="FILE", help="Run queries from file (one per line)"
+    )
     ap.add_argument("-o", "--out", metavar="FILE", help="Write results to file")
-    ap.add_argument("--csv", action="store_true", help="Write full responses in CSV (use with -o)")
-    ap.add_argument("-q", "--quiet", action="store_true", help="Only print summary to --out")
+    ap.add_argument(
+        "--csv", action="store_true", help="Write full responses in CSV (use with -o)"
+    )
+    ap.add_argument(
+        "-q", "--quiet", action="store_true", help="Only print summary to --out"
+    )
     args = ap.parse_args()
 
     if args.list:
@@ -298,11 +363,18 @@ def main():
     else:
         queries = SMOKE_QUERIES
 
-    print(f"Running {len(queries)} queries" + (" via API" if args.api else " (direct orchestrator)") + "…")
+    print(
+        f"Running {len(queries)} queries"
+        + (" via API" if args.api else " (direct orchestrator)")
+        + "…"
+    )
 
     if args.api:
         if not args.email or not args.password:
-            print("Error: --api requires --email and --password (or set API_TEST_EMAIL and API_TEST_PASSWORD)", file=sys.stderr)
+            print(
+                "Error: --api requires --email and --password (or set API_TEST_EMAIL and API_TEST_PASSWORD)",
+                file=sys.stderr,
+            )
             sys.exit(1)
         run_queries_via_api(
             queries,
@@ -314,7 +386,9 @@ def main():
             csv_mode=args.csv,
         )
     else:
-        run_queries_direct(queries, verbose=not args.quiet, out_path=args.out, csv_mode=args.csv)
+        run_queries_direct(
+            queries, verbose=not args.quiet, out_path=args.out, csv_mode=args.csv
+        )
 
 
 if __name__ == "__main__":

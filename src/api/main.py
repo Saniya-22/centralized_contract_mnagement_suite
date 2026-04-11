@@ -966,7 +966,6 @@ async def clause_lookup(
 
 
 if __name__ == "__main__":
-
     import uvicorn
 
     uvicorn.run(

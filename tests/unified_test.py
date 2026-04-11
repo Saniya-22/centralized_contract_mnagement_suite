@@ -1,7 +1,6 @@
 import time
 import uuid
 import requests
-import json
 import logging
 import statistics
 from datetime import datetime
@@ -12,22 +11,24 @@ TEST_QUERIES = [
     {
         "name": "Standard Search (Small Business)",
         "query": "What are the requirements for small business set-asides?",
-        "validate": lambda r: "business" in r.get("response", "").lower()
+        "validate": lambda r: "business" in r.get("response", "").lower(),
     },
     {
         "name": "FAR Subsection Lookup (52.219-8(a))",
         "query": "Show me details about FAR 52.219-8(a)",
-        "validate": lambda r: "52.219-8" in r.get("response", "")
+        "validate": lambda r: "52.219-8" in r.get("response", ""),
     },
     {
         "name": "EM-385 New Format (01.A.01)",
         "query": "What are the safety requirements in EM-385?",
-        "validate": lambda r: "EM 385" in r.get("response", "") or "safety" in r.get("response", "").lower()
-    }
+        "validate": lambda r: "EM 385" in r.get("response", "")
+        or "safety" in r.get("response", "").lower(),
+    },
 ]
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
+
 
 def run_benchmark():
     print("=" * 60)
@@ -38,7 +39,9 @@ def run_benchmark():
     # 1. Health Check
     try:
         health = requests.get(f"{API_URL}/health").json()
-        print(f"✅ System Status: {health.get('status', 'OFFLINE')} | DB: {health.get('database', 'UNKNOWN')}")
+        print(
+            f"✅ System Status: {health.get('status', 'OFFLINE')} | DB: {health.get('database', 'UNKNOWN')}"
+        )
     except Exception:
         print("❌ CRITICAL: Backend is not running! Please run 'bash run.sh' first.")
         return
@@ -48,20 +51,28 @@ def run_benchmark():
     print("-" * 40)
 
     results = []
-    
+
     for t in TEST_QUERIES:
         print(f"\nTesting: {t['name']}")
         print(f"Query: '{t['query']}'")
-        
+
         # Get token
         try:
             import subprocess
             import os
+
             _root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-            token = subprocess.check_output(
-                [os.path.join(_root, "venv", "bin", "python3"), "scripts/gen_test_token.py"],
-                cwd=_root,
-            ).decode().strip()
+            token = (
+                subprocess.check_output(
+                    [
+                        os.path.join(_root, "venv", "bin", "python3"),
+                        "scripts/gen_test_token.py",
+                    ],
+                    cwd=_root,
+                )
+                .decode()
+                .strip()
+            )
             headers = {"Authorization": f"Bearer {token}"}
         except Exception as e:
             print(f"⚠️  Could not generate token: {e}")
@@ -71,21 +82,26 @@ def run_benchmark():
         try:
             resp = requests.post(
                 f"{API_URL}/query",
-                json={"query": t['query'], "history": [], "cot": False, "thread_id": str(uuid.uuid4())},
+                json={
+                    "query": t["query"],
+                    "history": [],
+                    "cot": False,
+                    "thread_id": str(uuid.uuid4()),
+                },
                 headers=headers,
-                timeout=30
+                timeout=30,
             )
             elapsed = time.perf_counter() - start_time
-            
+
             if resp.status_code == 200:
                 data = resp.json()
-                valid = t['validate'](data)
+                valid = t["validate"](data)
                 status = "✅ PASS" if valid else "⚠️  CHECK (Low Recall)"
                 print(f"Result: {status} | Latency: {elapsed:.2f}s")
                 results.append(elapsed)
-                
+
                 # Show snippet
-                ans = data.get('response', '')[:100].replace('\n', ' ')
+                ans = data.get("response", "")[:100].replace("\n", " ")
                 print(f"Snippet: {ans}...")
             else:
                 print(f"❌ FAILED: Status {resp.status_code}")
@@ -104,6 +120,7 @@ def run_benchmark():
         print("\nNote: Latency includes OpenAI Embedding API + DB Search + Synthesis.")
     else:
         print("\n❌ No tests completed successfully.")
+
 
 if __name__ == "__main__":
     run_benchmark()

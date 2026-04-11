@@ -75,8 +75,14 @@ def analyze_pdf(pdf_path: Path) -> dict[str, Any]:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Document analysis report for chunking readiness")
-    p.add_argument("--spec-dir", default="specifications", help="Directory containing regulation PDFs")
+    p = argparse.ArgumentParser(
+        description="Document analysis report for chunking readiness"
+    )
+    p.add_argument(
+        "--spec-dir",
+        default="specifications",
+        help="Directory containing regulation PDFs",
+    )
     p.add_argument("--csv-out", default="", help="Optional CSV output path")
     args = p.parse_args()
 
@@ -99,12 +105,16 @@ def main() -> None:
 
     total_chunks = sum(r["chunks"] for r in rows)
     weighted_tiny = (
-        sum(r["chunks"] * r["tiny_pct"] for r in rows) / total_chunks if total_chunks else 0.0
+        sum(r["chunks"] * r["tiny_pct"] for r in rows) / total_chunks
+        if total_chunks
+        else 0.0
     )
     fallback_docs = [r["file"] for r in rows if r["fallback"]]
     high_tiny_docs = [r["file"] for r in rows if r["tiny_pct"] > 20]
     print("\nSUMMARY")
-    print(f"docs={len(rows)} total_chunks={total_chunks} weighted_tiny_pct={weighted_tiny:.2f}")
+    print(
+        f"docs={len(rows)} total_chunks={total_chunks} weighted_tiny_pct={weighted_tiny:.2f}"
+    )
     print(f"fallback_docs={fallback_docs}")
     print(f"high_tiny_docs(>20%)={high_tiny_docs}")
 
@@ -135,4 +145,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

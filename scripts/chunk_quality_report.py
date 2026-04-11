@@ -114,7 +114,9 @@ def main() -> None:
 
             print("\n-- Table Coverage --")
             dense_total = _count_query(cur, f"SELECT COUNT(*) FROM {args.dense_table}")
-            sparse_total = _count_query(cur, f"SELECT COUNT(*) FROM {args.sparse_table}")
+            sparse_total = _count_query(
+                cur, f"SELECT COUNT(*) FROM {args.sparse_table}"
+            )
             dense_ns = _count_query(
                 cur,
                 f"SELECT COUNT(*) FROM {args.dense_table} WHERE namespace LIKE %s",

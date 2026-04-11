@@ -54,9 +54,7 @@ class Settings(BaseSettings):
     RERANKER_ENABLED: bool = True  # Set False to skip LLM rerank, use RRF only
     RAG_TOKEN_LIMIT: int = 2400  # Max tokens assembled into context for faster speed
     RETRIEVAL_TOP_K: int = 20  # Primary retrieval size for regulation_search path
-    REFLECTION_THRESHOLD: float = (
-        0.50  # Retrieval critique pass threshold (higher = stricter = more healing triggers)
-    )
+    REFLECTION_THRESHOLD: float = 0.50  # Retrieval critique pass threshold (higher = stricter = more healing triggers)
     REFLECTION_HEALING_MARGIN: float = (
         0.05  # Skip retries for near-threshold borderline scores
     )

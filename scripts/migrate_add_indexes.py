@@ -25,13 +25,13 @@ import argparse
 import logging
 import psycopg2
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.config import settings
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -41,16 +41,16 @@ TABLE = settings.PG_DENSE_TABLE
 
 INDEXES = [
     {
-        "name":        "idx_embeddings_hnsw_cosine",
+        "name": "idx_embeddings_hnsw_cosine",
         "description": "HNSW approximate nearest-neighbour index (cosine distance)",
-        "check_sql":   """
+        "check_sql": """
             SELECT 1 FROM pg_indexes
             WHERE tablename = %(table)s
               AND indexname  = 'idx_embeddings_hnsw_cosine'
         """,
         # CONCURRENTLY cannot run inside a transaction block
         # m=16, ef_construction=64 are solid defaults for 1536-dim OpenAI embeddings
-        "create_sql":  f"""
+        "create_sql": f"""
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_embeddings_hnsw_cosine
             ON {TABLE}
             USING hnsw (embedding vector_cosine_ops)
@@ -58,14 +58,14 @@ INDEXES = [
         """,
     },
     {
-        "name":        "idx_embeddings_search_vector_gin",
+        "name": "idx_embeddings_search_vector_gin",
         "description": "GIN index on search_vector for ts_rank_cd FTS",
-        "check_sql":   """
+        "check_sql": """
             SELECT 1 FROM pg_indexes
             WHERE tablename = %(table)s
               AND indexname  = 'idx_embeddings_search_vector_gin'
         """,
-        "create_sql":  f"""
+        "create_sql": f"""
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_embeddings_search_vector_gin
             ON {TABLE}
             USING gin(search_vector)
@@ -96,14 +96,19 @@ def _table_row_count(conn, table: str) -> int:
         # Fast approximate count from pg_class
         cur.execute(
             "SELECT reltuples::bigint FROM pg_class WHERE relname = %s",
-            (table.split(".")[-1],)
+            (table.split(".")[-1],),
         )
         row = cur.fetchone()
         return row[0] if row else 0
 
 
 def run_migration(dry_run: bool = False):
-    logger.info("Connecting to PostgreSQL at %s:%s/%s", settings.PG_HOST, settings.PG_PORT, settings.PG_DB)
+    logger.info(
+        "Connecting to PostgreSQL at %s:%s/%s",
+        settings.PG_HOST,
+        settings.PG_PORT,
+        settings.PG_DB,
+    )
     conn = _connect()
 
     try:
@@ -124,7 +129,9 @@ def run_migration(dry_run: bool = False):
 
             logger.info("   ⏳ Creating index (CONCURRENTLY)...")
             if dry_run:
-                logger.info("   [DRY RUN] Would execute:\n%s", idx["create_sql"].strip())
+                logger.info(
+                    "   [DRY RUN] Would execute:\n%s", idx["create_sql"].strip()
+                )
                 continue
 
             # CONCURRENTLY requires a connection that has NEVER started a transaction.
@@ -132,7 +139,7 @@ def run_migration(dry_run: bool = False):
             # already opened an implicit transaction on it. Open a brand-new connection.
             idx_conn = _connect()
             try:
-                idx_conn.autocommit = True   # must be set before any statement
+                idx_conn.autocommit = True  # must be set before any statement
                 with idx_conn.cursor() as cur:
                     cur.execute(idx["create_sql"])
                 logger.info("   ✅ Index '%s' created successfully.", idx["name"])
@@ -150,8 +157,12 @@ def run_migration(dry_run: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Add HNSW + GIN indexes to embeddings_dense")
-    parser.add_argument("--dry-run", action="store_true", help="Print SQL without executing")
+    parser = argparse.ArgumentParser(
+        description="Add HNSW + GIN indexes to embeddings_dense"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print SQL without executing"
+    )
     args = parser.parse_args()
 
     run_migration(dry_run=args.dry_run)

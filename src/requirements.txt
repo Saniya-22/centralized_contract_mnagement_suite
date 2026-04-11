@@ -71,6 +71,7 @@ pluggy==1.6.0
 propcache==0.4.1
 protobuf==6.33.5
 psycopg==3.3.3
+psycopg-binary==3.3.3
 psycopg-pool==3.3.0
 psycopg2-binary==2.9.11
 pyarrow==23.0.1

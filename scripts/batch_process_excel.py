@@ -59,11 +59,7 @@ async def process_batch(input_file: str, output_file: str):
 
             # Run the orchestrator
             response = await orchestrator.run_async(
-                query=query,
-                context={
-                    "thread_id": thread_id,
-                    "user_id": "batch_worker"
-                }
+                query=query, context={"thread_id": thread_id, "user_id": "batch_worker"}
             )
 
             # Extract text response

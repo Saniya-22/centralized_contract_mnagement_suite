@@ -55,11 +55,16 @@ PRIORITY_ROWS = [3, 14, 16, 19, 20, 2, 21, 72, 5, 6, 9]
 
 def _categorize(query: str) -> str:
     q = (query or "").lower()
-    if any(t in q for t in ("also include", "add clause", "include 52.", "include far")):
+    if any(
+        t in q for t in ("also include", "add clause", "include 52.", "include far")
+    ):
         return "letter_amendment"
     if any(t in q for t in ("write ", "draft ", "serial letter", "rea", "rfi")):
         return "letter_request"
-    if any(t in q for t in ("commissioning", "punchlist", "closeout", "substantial completion")):
+    if any(
+        t in q
+        for t in ("commissioning", "punchlist", "closeout", "substantial completion")
+    ):
         return "lifecycle"
     if any(t in q for t in ("off site", "off-site", "offsite", "stored materials")):
         return "offsite_storage"
@@ -86,7 +91,9 @@ def _load_rows(xlsx_path: str, sheet: str) -> List[ExcelRow]:
     try:
         import openpyxl
     except ImportError as e:
-        raise RuntimeError("Missing dependency: openpyxl. Install with `pip install openpyxl`.") from e
+        raise RuntimeError(
+            "Missing dependency: openpyxl. Install with `pip install openpyxl`."
+        ) from e
 
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     if sheet not in wb.sheetnames:
@@ -131,13 +138,22 @@ def _run_queries_direct(rows: Iterable[ExcelRow]) -> List[Dict[str, Any]]:
                 result = await _run_direct(row.query)
                 out.append({"ok": True, "row": row, "result": result, "error": ""})
             except Exception as e:  # pragma: no cover
-                out.append({"ok": False, "row": row, "result": {}, "error": f"{type(e).__name__}: {e}"})
+                out.append(
+                    {
+                        "ok": False,
+                        "row": row,
+                        "result": {},
+                        "error": f"{type(e).__name__}: {e}",
+                    }
+                )
 
     asyncio.run(_run_all())
     return out
 
 
-def _run_queries_api(rows: Iterable[ExcelRow], api_url: str, email: str, password: str) -> List[Dict[str, Any]]:
+def _run_queries_api(
+    rows: Iterable[ExcelRow], api_url: str, email: str, password: str
+) -> List[Dict[str, Any]]:
     token = _get_token(api_url, email, password)
     out: List[Dict[str, Any]] = []
     for row in rows:
@@ -145,7 +161,14 @@ def _run_queries_api(rows: Iterable[ExcelRow], api_url: str, email: str, passwor
             result = _post_query(api_url, token, row.query)
             out.append({"ok": True, "row": row, "result": result, "error": ""})
         except Exception as e:
-            out.append({"ok": False, "row": row, "result": {}, "error": f"{type(e).__name__}: {e}"})
+            out.append(
+                {
+                    "ok": False,
+                    "row": row,
+                    "result": {},
+                    "error": f"{type(e).__name__}: {e}",
+                }
+            )
     return out
 
 
@@ -172,14 +195,27 @@ def _eval_case(category: str, result: Dict[str, Any], response: str) -> tuple[st
             return "FAIL", "Execution error."
         if path == "clarifier":
             return "FAIL", "Amendment should not go to clarifier."
-        if not any(t in response_l for t in ("subject:", "dear", "sincerely", "request for equitable adjustment", "serial letter")):
+        if not any(
+            t in response_l
+            for t in (
+                "subject:",
+                "dear",
+                "sincerely",
+                "request for equitable adjustment",
+                "serial letter",
+            )
+        ):
             return "WARN", "Amendment may not have produced letter-form output."
         return "PASS", "Amendment likely handled as letter flow."
 
     if category == "lifecycle":
         if path == "clarifier":
             return "FAIL", "Lifecycle query routed to clarifier."
-        if "contracting officer" in response_l and "commissioning" not in response_l and "punchlist" not in response_l:
+        if (
+            "contracting officer" in response_l
+            and "commissioning" not in response_l
+            and "punchlist" not in response_l
+        ):
             return "WARN", "Lifecycle response may be overly contract/CO-oriented."
         return "PASS", "Lifecycle routing looks acceptable."
 
@@ -203,7 +239,9 @@ def _to_csv_rows(records: Iterable[Dict[str, Any]]) -> List[Dict[str, str]]:
         ok = rec["ok"]
         result = rec["result"] or {}
         response = str(result.get("response") or "").strip()
-        verdict, reason = _eval_case(row.category, result, response) if ok else ("FAIL", rec["error"])
+        verdict, reason = (
+            _eval_case(row.category, result, response) if ok else ("FAIL", rec["error"])
+        )
         csv_rows.append(
             {
                 "row_num": str(row.row_num),
@@ -277,19 +315,31 @@ def _write_xlsx_new_responses(path: str, records: List[Dict[str, Any]]) -> None:
         import openpyxl
         from openpyxl.styles import Alignment
     except ImportError as e:
-        raise RuntimeError("Missing dependency: openpyxl. Install with `pip install openpyxl`.") from e
+        raise RuntimeError(
+            "Missing dependency: openpyxl. Install with `pip install openpyxl`."
+        ) from e
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet1"
-    headers = ["User Query", "Previous Response", "Current Response", "User Feedback", "new_responses"]
+    headers = [
+        "User Query",
+        "Previous Response",
+        "Current Response",
+        "User Feedback",
+        "new_responses",
+    ]
     for c, h in enumerate(headers, 1):
         ws.cell(row=1, column=c, value=h)
     wrap = Alignment(wrap_text=True, vertical="top")
     for r_idx, rec in enumerate(records, start=2):
         row: ExcelRow = rec["row"]
         result = rec.get("result") or {}
-        response_text = (result.get("response") or "").strip() if rec.get("ok") else str(rec.get("error", ""))
+        response_text = (
+            (result.get("response") or "").strip()
+            if rec.get("ok")
+            else str(rec.get("error", ""))
+        )
         ws.cell(row=r_idx, column=1, value=row.query).alignment = wrap
         ws.cell(row=r_idx, column=2, value=row.previous_response).alignment = wrap
         ws.cell(row=r_idx, column=3, value=row.current_response).alignment = wrap
@@ -299,17 +349,33 @@ def _write_xlsx_new_responses(path: str, records: List[Dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run regression checks from Response Comparison.xlsx")
+    ap = argparse.ArgumentParser(
+        description="Run regression checks from Response Comparison.xlsx"
+    )
     ap.add_argument("--xlsx", required=True, help="Path to the Excel file")
     ap.add_argument("--sheet", default="Sheet1", help="Sheet name (default: Sheet1)")
-    ap.add_argument("--rows", help="Comma-separated Excel row numbers to run (e.g. 3,5,6)")
-    ap.add_argument("--priority", action="store_true", help="Run predefined high-priority rows")
-    ap.add_argument("--api", action="store_true", help="Run via API instead of direct orchestrator")
-    ap.add_argument("--api-url", default=os.environ.get("API_BASE_URL", "http://localhost:8000"))
+    ap.add_argument(
+        "--rows", help="Comma-separated Excel row numbers to run (e.g. 3,5,6)"
+    )
+    ap.add_argument(
+        "--priority", action="store_true", help="Run predefined high-priority rows"
+    )
+    ap.add_argument(
+        "--api", action="store_true", help="Run via API instead of direct orchestrator"
+    )
+    ap.add_argument(
+        "--api-url", default=os.environ.get("API_BASE_URL", "http://localhost:8000")
+    )
     ap.add_argument("--email", default=os.environ.get("API_TEST_EMAIL"))
     ap.add_argument("--password", default=os.environ.get("API_TEST_PASSWORD"))
-    ap.add_argument("--out-prefix", default="docs/regression_from_excel", help="Output file prefix")
-    ap.add_argument("--out-xlsx", metavar="FILE", help="Write results to an Excel file with column 'new_responses' (e.g. .../new_responses.xlsx)")
+    ap.add_argument(
+        "--out-prefix", default="docs/regression_from_excel", help="Output file prefix"
+    )
+    ap.add_argument(
+        "--out-xlsx",
+        metavar="FILE",
+        help="Write results to an Excel file with column 'new_responses' (e.g. .../new_responses.xlsx)",
+    )
     args = ap.parse_args()
 
     rows = _load_rows(args.xlsx, args.sheet)
@@ -327,11 +393,15 @@ def main() -> None:
     if not selected:
         raise RuntimeError("No matching rows selected.")
 
-    print(f"Loaded {len(rows)} spreadsheet rows; running {len(selected)} selected rows.")
+    print(
+        f"Loaded {len(rows)} spreadsheet rows; running {len(selected)} selected rows."
+    )
     if args.api:
         print("Using API (login required).")
         if not args.email or not args.password:
-            raise RuntimeError("--api requires --email and --password (or API_TEST_EMAIL/API_TEST_PASSWORD)")
+            raise RuntimeError(
+                "--api requires --email and --password (or API_TEST_EMAIL/API_TEST_PASSWORD)"
+            )
         records = _run_queries_api(selected, args.api_url, args.email, args.password)
     else:
         print("Using direct orchestrator (no server, no login).")

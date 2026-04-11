@@ -15,7 +15,6 @@ import time
 import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -23,7 +22,9 @@ from src.agents.orchestrator import GovGigOrchestrator
 
 # Keep this in sync with GovGigOrchestrator._safe_fallback_message()
 # which triggers when no retrieved docs are available.
-FALLBACK_PHRASE = "The retrieved regulatory excerpts do not directly address this specific question"
+FALLBACK_PHRASE = (
+    "The retrieved regulatory excerpts do not directly address this specific question"
+)
 CITATION_RE = re.compile(r"\b(FAR|DFARS|EM\s*385)\b\s*\d", re.IGNORECASE)
 
 
@@ -63,7 +64,9 @@ def _load_cases(path: Path) -> list[QueryCase]:
                 expected_regulation=item.get("expected_regulation"),
                 must_contain_any=item.get("must_contain_any"),
                 require_citation=bool(item.get("require_citation", True)),
-                max_seconds=float(item["max_seconds"]) if item.get("max_seconds") else None,
+                max_seconds=float(item["max_seconds"])
+                if item.get("max_seconds")
+                else None,
             )
         )
     return cases
